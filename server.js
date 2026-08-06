@@ -23,7 +23,7 @@ const MONTHLY_VOUCHER_LIMIT = 15;
 const MAX_MONTHLY_FREEBIE_CLAIMS = 2;      // 🎁 Capped at 2 claims per month per user
 
 const MAX_DAILY_MESSAGES = 15;             
-const MAX_DAILY_GLOBAL_SIGNUPS = 50;       
+const MAX_DAILY_GLOBAL_SIGNUPS = 100;      // 🔄 Updated to 100 max daily registrations
 const MAX_DAILY_OTP_PER_USER = 1;          
 
 const MINING_UNLOCK_INVITES = 2;          
@@ -147,6 +147,14 @@ async function firebasePatch(path, data) {
   }
 }
 
+async function firebaseDelete(path) {
+  try {
+    await db.ref(path).remove();
+  } catch (e) {
+    console.error("Firebase DELETE Exception: ", e.message);
+  }
+}
+
 function tryUserLock(psid) {
   if (cache.get(`LOCK_${psid}`)) return false;
   cache.set(`LOCK_${psid}`, "LOCKED", 15); 
@@ -223,12 +231,10 @@ async function processWebhookEvent(webhookEvent) {
     setDirectRef(senderPsid, webhookEvent.postback.referral.ref.trim().toUpperCase());
   }
 
-  // Handle postback or text message entry starting with ref payload formatting
   if (webhookEvent.message) {
     let messageText = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : webhookEvent.message.text ? webhookEvent.message.text.trim() : null;
     if (!messageText) return sendTextMessage(senderPsid, "⚠️ Invalid input format. Please reply using the text options.");
     
-    // Auto-detect referral code if user pastes the share link block
     if (messageText.includes("?ref=")) {
       const parts = messageText.split("?ref=");
       if (parts[1]) {
@@ -363,7 +369,19 @@ async function handleIncomingMessage(psid, text) {
   }
 
   if (trimmedUpper === "/ADMIN UNTEST" || trimmedUpper === "UNTEST" || trimmedUpper === "/UNTEST") {
-    return revokeTesterAccess(psid);
+    return revokeAndResetAccount(psid);
+  }
+
+  // 🛠️ Admin command to reset OTP daily limit for testing purposes: /ADMIN RESETOTP email@gmail.com
+  if (trimmedUpper.startsWith("/ADMIN RESETOTP")) {
+    const targetEmail = trimmedUpper.replace("/ADMIN RESETOTP", "").trim().toLowerCase();
+    if (targetEmail) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const cleanEmailKey = targetEmail.replace(/\./g, '_');
+      await firebaseDelete(`system/otp_${cleanEmailKey}_${todayStr}`);
+      return sendTextMessage(psid, `✅ OTP limit successfully cleared for: ${targetEmail}`);
+    }
+    return sendTextMessage(psid, "❌ Usage: /ADMIN RESETOTP your_email@gmail.com");
   }
 
   const user = await getUserRecord(psid);
@@ -539,7 +557,7 @@ async function generateCompactReferralCode() {
   return code;
 }
 
-function generateBOMVoucherCode(psid) {
+async function generateBOMVoucherCode(psid) {
   const heroes = ["NEPHI", "MORONI", "ALMA", "HELAMAN", "AMMON", "ETHER", "LEHI", "MORMON"];
   const selectedHero = heroes[Math.floor(Math.random() * heroes.length)];
   const rawPayload = `${psid || 'GUEST'}_${Date.now()}_${Math.random()}`;
@@ -558,7 +576,7 @@ function generateBOMVoucherCode(psid) {
 // 8. REGISTRATION & OTP FLOWS
 // ==========================================
 async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
-  if (!(await checkGlobalSignupLimit())) return sendTextMessage(psid, "⚠️ Daily Sign-Up Cap Reached: Today's global registration limit (50 members) has been reached.");
+  if (!(await checkGlobalSignupLimit())) return sendTextMessage(psid, `⚠️ Daily Sign-Up Cap Reached: Today's global registration limit (${MAX_DAILY_GLOBAL_SIGNUPS} members) has been reached.`);
   if (!(await checkEmailOTPLimit(cleanEmail))) return sendTextMessage(psid, "⚠️ Daily OTP Limit Reached: A verification code was already sent to this email address today.");
   if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(cleanEmail)) return sendTextMessage(psid, "❌ Incorrect Email Format: Please enter a valid email address:");
   
@@ -666,15 +684,22 @@ async function grantTesterAccess(psid) {
   sendQuickReplies(psid, `🛠️ TESTER MODE ACTIVATED\n------------------\n• Balance: 10,000 Pts\n• Limits: UNLOCKED`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
 }
 
-async function revokeTesterAccess(psid) {
+async function revokeAndResetAccount(psid) {
   const user = await getUserRecord(psid);
   if (!user) return sendTextMessage(psid, "❌ No profile found.");
-  
-  await updateCachedUser(psid, { isTester: false, points: 1.0 });
+
+  if (user.refCode) await firebaseDelete(`refToPsid/${user.refCode}`);
+  if (user.email) await firebaseDelete(`emails/${user.email.replace(/\./g, ',')}`);
+  await firebaseDelete(`vouchers/${psid}`);
+  await firebaseDelete(`users/${psid}`);
+
   clearSession(psid);
   cache.del("USER_" + psid);
+  cache.del("DIRECT_REF_" + psid);
 
-  sendQuickReplies(psid, `🔒 TESTER MODE REVOKED\n------------------\n• Status: Regular Member\n• Points Reset: 1.0 Pt`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
+  sendQuickReplies(psid, `🔄 ACCOUNT FULLY REVOKED & RESET\n------------------\nYour tester status, balance, vouchers, and profile have been completely wiped.\n\nType "Get Started" or send your friend's Invite Key to start fresh!`, [
+    { title: "Get Started", payload: "GET_STARTED" }
+  ]);
 }
 
 // ==========================================
@@ -761,7 +786,6 @@ async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, i
     passiveRefPoints: (referrer.passiveRefPoints || 0) + directReward 
   });
 
-  // 🔔 Referral Notification Sent to Upline
   const notif = isMissionary 
     ? `⚡ NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Type: Missionary (@missionary.org)\n• Reward: +10.0 Pts\n• 🎁 Daily Redeem UNLOCKED!` 
     : `🎉 NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Reward: +2.0 Pts\n• Total Invites: ${getInviteStats(referrer).total + 1} / ${MAX_REFERRALS_PER_USER}`;
