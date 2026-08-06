@@ -1,7 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-require('firebase-admin/database');
+const { initializeApp, cert } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
 const NodeCache = require('node-cache');
 const nodemailer = require('nodemailer');
@@ -82,9 +82,6 @@ const FREEBIE_REWARDS = [
 // ==========================================
 // 2. INITIALIZE FIREBASE & NODEMAILER
 // ==========================================
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getDatabase } = require('firebase-admin/database');
-
 initializeApp({
   credential: cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
