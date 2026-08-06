@@ -82,8 +82,11 @@ const FREEBIE_REWARDS = [
 // ==========================================
 // 2. INITIALIZE FIREBASE & NODEMAILER
 // ==========================================
-admin.initializeApp({
-  credential: admin.credential.cert({
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getDatabase } = require('firebase-admin/database');
+
+initializeApp({
+  credential: cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
     privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined
