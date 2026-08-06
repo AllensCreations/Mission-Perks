@@ -1,7 +1,8 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-require('firebase-admin/database'); // Explicitly import Realtime Database module
+require('firebase-admin/app');
+require('firebase-admin/database');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
