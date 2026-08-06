@@ -103,7 +103,7 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        sender: { name: "Timeless Creations", email: "no-reply@timelesscreations.com" },
+        sender: { name: "Timeless Creations", email: "noreply.timelesscreations.ph@gmail.com" },
         to: [{ email: toEmail }],
         subject: subject,
         htmlContent: htmlContent
