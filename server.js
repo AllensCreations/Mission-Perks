@@ -87,7 +87,6 @@ admin.initializeApp({
 });
 
 const db = getDatabase();
-
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
