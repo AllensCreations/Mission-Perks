@@ -29,11 +29,6 @@ const REAL_PERSON_CHAT_LINK = "https://m.me/timeless.creations.06";
 // 2. INITIALIZE FIREBASE & NODEMAILER
 // ==========================================
 admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined
-  }),
   databaseURL: process.env.FIREBASE_DATABASE_URL,
   databaseAuthVariableOverride: process.env.FIREBASE_SECRET ? { uid: "admin" } : undefined
 });
