@@ -223,9 +223,20 @@ async function processWebhookEvent(webhookEvent) {
     setDirectRef(senderPsid, webhookEvent.postback.referral.ref.trim().toUpperCase());
   }
 
+  // Handle postback or text message entry starting with ref payload formatting
   if (webhookEvent.message) {
     let messageText = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : webhookEvent.message.text ? webhookEvent.message.text.trim() : null;
     if (!messageText) return sendTextMessage(senderPsid, "⚠️ Invalid input format. Please reply using the text options.");
+    
+    // Auto-detect referral code if user pastes the share link block
+    if (messageText.includes("?ref=")) {
+      const parts = messageText.split("?ref=");
+      if (parts[1]) {
+        const extractedCode = parts[1].trim().toUpperCase().substring(0, 6);
+        setDirectRef(senderPsid, extractedCode);
+      }
+    }
+
     await handleIncomingMessage(senderPsid, messageText);
   } else if (webhookEvent.postback && webhookEvent.postback.payload) {
     await handleIncomingMessage(senderPsid, webhookEvent.postback.payload);
@@ -351,6 +362,10 @@ async function handleIncomingMessage(psid, text) {
     return sendTextMessage(psid, "❌ Access Denied.");
   }
 
+  if (trimmedUpper === "/ADMIN UNTEST" || trimmedUpper === "UNTEST" || trimmedUpper === "/UNTEST") {
+    return revokeTesterAccess(psid);
+  }
+
   const user = await getUserRecord(psid);
 
   if (user) {
@@ -362,6 +377,10 @@ async function handleIncomingMessage(psid, text) {
     let session = getSession(psid);
 
     if (session) {
+      if (trimmedUpper === "NAV_STATUS" || trimmedUpper === "BACK_TO_DASHBOARD") {
+        clearSession(psid);
+        return displayDashboard(psid, user);
+      }
       if (session.state === "AWAITING_CART_INPUT") return processCartCheckout(psid, text, user, session);
       if (session.state === "AWAITING_GIFT_DETAILS") return processGiftSubmission(psid, text, session);
     }
@@ -609,7 +628,7 @@ async function finalizeRegistration(psid, session, appliedRefCode) {
   await firebasePut(`refToPsid/${userRefCode}`, psid);
   await firebasePut(`emails/${session.email.replace(/\./g, ',')}`, psid);
 
-  if (finalRef && finalRef !== MASTER_REFERRAL_CODE) await distributeUplineCommissions(finalRef, psid, session.email, initialBonus);
+  if (finalRef && finalRef !== MASTER_REFERRAL_CODE) await distributeUplineCommissions(finalRef, psid, session.email, initialBonus, session.title + " " + session.lastName);
 
   const expiryDate = new Date();
   expiryDate.setMonth(expiryDate.getMonth() + 1);
@@ -645,6 +664,17 @@ async function grantTesterAccess(psid) {
   cache.del("USER_" + psid);
   
   sendQuickReplies(psid, `🛠️ TESTER MODE ACTIVATED\n------------------\n• Balance: 10,000 Pts\n• Limits: UNLOCKED`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
+}
+
+async function revokeTesterAccess(psid) {
+  const user = await getUserRecord(psid);
+  if (!user) return sendTextMessage(psid, "❌ No profile found.");
+  
+  await updateCachedUser(psid, { isTester: false, points: 1.0 });
+  clearSession(psid);
+  cache.del("USER_" + psid);
+
+  sendQuickReplies(psid, `🔒 TESTER MODE REVOKED\n------------------\n• Status: Regular Member\n• Points Reset: 1.0 Pt`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
 }
 
 // ==========================================
@@ -718,7 +748,7 @@ async function processDailyRedeem(psid, user) {
 // ==========================================
 // 11. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
 // ==========================================
-async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus) {
+async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
   if (!referrer || referrer.psid === newPsid) return;
 
@@ -731,7 +761,10 @@ async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, i
     passiveRefPoints: (referrer.passiveRefPoints || 0) + directReward 
   });
 
-  let notif = isMissionary ? `⚡ MISSIONARY REFERRAL BONUS! 🎉\n• A Missionary joined! (@missionary.org)\n• Reward: +10.0 Pts\n• 🎁 Daily Redeem UNLOCKED!` : `🎉 CONGRATULATIONS! 🎉\n• A member signed up using your key!\n• Reward: +2.0 Pts\n• Invites: ${getInviteStats(referrer).total + 1} / ${MAX_REFERRALS_PER_USER}`;
+  // 🔔 Referral Notification Sent to Upline
+  const notif = isMissionary 
+    ? `⚡ NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Type: Missionary (@missionary.org)\n• Reward: +10.0 Pts\n• 🎁 Daily Redeem UNLOCKED!` 
+    : `🎉 NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Reward: +2.0 Pts\n• Total Invites: ${getInviteStats(referrer).total + 1} / ${MAX_REFERRALS_PER_USER}`;
   sendTextMessage(referrer.psid, notif);
 
   await processLevelCommissions(referrer.psid, directReward);
@@ -884,9 +917,9 @@ async function processFreebieRedeem(psid, idx, user) {
     for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
       catalogMenu += ` ${key}️⃣ ${p.name} — ${p.price.toFixed(2)} Php\n`;
     }
-    catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write comma or space separated numbers (e.g. 5,5,1 to buy two of #5 and one of #1)!`;
+    catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write comma or space separated numbers (e.g. 5,5,1 to buy two of #5 and one of #1)!\n\n⬅️ Or type "Back" to return to the dashboard.`;
 
-    sendTextMessage(psid, catalogMenu);
+    sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "BACK_TO_DASHBOARD" }]);
   } finally {
     releaseUserLock(psid);
   }
@@ -904,7 +937,7 @@ async function promptVoucherWarning(psid, code) {
   if (target.status === "USED") return sendTextMessage(psid, "⚠️ Voucher already redeemed.");
   if (target.expiryDate < todayStr) return sendTextMessage(psid, "⏰ Voucher has expired.");
 
-  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher CANNOT BE UNDONE! Once confirmed, this voucher will be permanently marked as USED!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
+  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher CANNOT BE UNDONE! Once confirmed, this voucher will be permanently marked as USED and cannot be returned to your vault!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
 }
 
 async function initiateVoucherApplyFlow(psid, code, user) {
@@ -926,13 +959,20 @@ async function initiateVoucherApplyFlow(psid, code, user) {
   } else {
     catalogMenu += `------------------\n👉 Enter product numbers (e.g. 1,1,3,8 to buy multiple quantities).`;
   }
-  sendTextMessage(psid, catalogMenu);
+  catalogMenu += `\n\n⬅️ Or type "Back" to return to the dashboard.`;
+
+  sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "BACK_TO_DASHBOARD" }]);
 }
 
 async function processCartCheckout(psid, text, user, session) {
   if (!tryUserLock(psid)) return;
   try {
     const cleanInput = text.trim();
+    if (cleanInput.toUpperCase() === "BACK" || cleanInput.toUpperCase() === "BACK_TO_DASHBOARD") {
+      clearSession(psid);
+      return displayDashboard(psid, user);
+    }
+
     const cartCounts = {};
     let invalidEntries = false;
 
@@ -942,7 +982,7 @@ async function processCartCheckout(psid, text, user, session) {
         else invalidEntries = true; 
       });
       
-      if (invalidEntries) return sendTextMessage(psid, "❌ Input Error: Enter valid catalog numbers (1-8), or type '0' (e.g. 1,1,3 to buy multiple quantities).");
+      if (invalidEntries) return sendTextMessage(psid, "❌ Input Error: Enter valid catalog numbers (1-8), type '0', or type 'Back' to return to the dashboard.");
     }
 
     const targetVoucher = session.targetVoucher;
