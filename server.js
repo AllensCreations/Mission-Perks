@@ -1,7 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-require('firebase-admin/credential'); // <-- Add this line
 require('firebase-admin/database');
 const { getDatabase } = require('firebase-admin/database');
 const NodeCache = require('node-cache');
