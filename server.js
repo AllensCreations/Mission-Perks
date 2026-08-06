@@ -1,8 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-require('firebase-admin/app');
-require('firebase-admin/database');
+const { getDatabase } = require('firebase-admin/database');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
@@ -35,7 +34,7 @@ admin.initializeApp({
   databaseAuthVariableOverride: process.env.FIREBASE_SECRET ? { uid: "admin" } : undefined
 });
 
-const db = admin.database();
+const db = getDatabase();
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
