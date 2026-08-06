@@ -4,7 +4,6 @@ const admin = require('firebase-admin');
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
 const NodeCache = require('node-cache');
-const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 require('dotenv').config();
 
@@ -80,7 +79,7 @@ const FREEBIE_REWARDS = [
 ];
 
 // ==========================================
-// 2. INITIALIZE FIREBASE & NODEMAILER
+// 2. INITIALIZE FIREBASE & BREVO API EMAIL
 // ==========================================
 initializeApp({
   credential: cert({
@@ -93,13 +92,33 @@ initializeApp({
 
 const db = getDatabase();
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.MAIL_USERNAME,
-    pass: process.env.MAIL_PASSWORD
+// HTTP-based email delivery via Brevo API (bypasses Render outbound SMTP port blocks)
+async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
+  try {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: { name: "Timeless Creations", email: "no-reply@timelesscreations.com" },
+        to: [{ email: toEmail }],
+        subject: subject,
+        htmlContent: htmlContent
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || "Failed to send email via Brevo API");
+    }
+  } catch (e) {
+    console.error("Brevo Email Exception: ", e.message);
+    throw e;
   }
-});
+}
 
 // Firebase REST-equivalent helper wrappers using Node.js SDK
 async function firebaseGet(path) {
@@ -147,6 +166,22 @@ app.get('/webhook', (req, res) => {
     return res.status(200).send(req.query['hub.challenge']);
   }
   return res.status(403).send('Verification failed');
+});
+
+// Dedicated Webhook endpoint for handling newsletter Unsubscriptions
+app.get('/unsubscribe', async (req, res) => {
+  const email = req.query.email;
+  if (!email) return res.status(400).send("<h3>❌ Invalid unsubscribe link.</h3>");
+  
+  const cleanEmailKey = email.toLowerCase().trim().replace(/\./g, '_');
+  const psid = await firebaseGet(`emails/${cleanEmailKey}`);
+  
+  if (psid) {
+    await firebasePatch(`users/${psid}`, { unsubscribed: true });
+    cache.del("USER_" + psid);
+    return res.status(200).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Successfully Unsubscribed</h2><p>You will no longer receive monthly updates from MissionPerks.</p></body></html>");
+  }
+  return res.status(404).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>❌ Email not found in our system records.</h2></body></html>");
 });
 
 app.post('/webhook', async (req, res) => {
@@ -354,8 +389,11 @@ async function handleIncomingMessage(psid, text) {
 
   if (!session) {
     if (trimmedUpper === "NO_REF_CODE") {
-      setSession(psid, { state: "AWAITING_EMAIL_FOR_MASTER" });
-      return sendTextMessage(psid, "📧 NO FRIEND'S INVITATION KEY?\n------------------\nPlease enter your Email address. We will email you the Master Key along with your Verification PIN.");
+      setSession(psid, { state: "AWAITING_CONSENT" });
+      return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+        { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+        { title: "❌ Decline", payload: "CANCEL" }
+      ]);
     }
 
     const inputCode = (trimmedUpper !== "GET_STARTED" && trimmedUpper !== "") ? trimmedUpper : currentRef;
@@ -368,8 +406,11 @@ async function handleIncomingMessage(psid, text) {
 
       if (matchingUser || inputCode === MASTER_REFERRAL_CODE) {
         setDirectRef(psid, inputCode);
-        setSession(psid, { state: "AWAITING_EMAIL" });
-        return sendTextMessage(psid, `🎉 INVITATION KEY VERIFIED!\n------------------\n• Code: ${inputCode}\n\n👉 STEP 1 of 4: Enter your Email address to verify your account:`);
+        setSession(psid, { state: "AWAITING_CONSENT" });
+        return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+          { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+          { title: "❌ Decline", payload: "CANCEL" }
+        ]);
       }
     }
 
@@ -379,7 +420,23 @@ async function handleIncomingMessage(psid, text) {
 
   if (trimmedUpper === "CANCEL" || trimmedUpper === "RESTART") {
     clearSession(psid);
-    return sendTextMessage(psid, "🔄 Registration cancelled. Please send your friend's Invite Key to try again.");
+    return sendTextMessage(psid, "🔄 Registration cancelled. Send 'Get Started' or your friend's Invite Key to try again.");
+  }
+
+  if (session.state === "AWAITING_CONSENT") {
+    if (trimmedUpper === "CONSENT_ACCEPTED" || trimmedUpper === "I AGREE" || trimmedUpper === "AGREE") {
+      const ref = getDirectRef(psid);
+      if (ref === MASTER_REFERRAL_CODE) {
+        setSession(psid, { state: "AWAITING_EMAIL_FOR_MASTER" });
+        return sendTextMessage(psid, `📧 NO FRIEND'S INVITATION KEY?\n------------------\nPlease enter your Email address. We will email you the Master Key along with your Verification PIN.`);
+      } else {
+        setSession(psid, { state: "AWAITING_EMAIL" });
+        return sendTextMessage(psid, `🎉 TERMS ACCEPTED!\n------------------\n👉 STEP 1 of 4: Enter your Email address to verify your account:`);
+      }
+    } else {
+      clearSession(psid);
+      return sendTextMessage(psid, "❌ Registration declined. You must accept the Data Privacy terms to register.");
+    }
   }
 
   if (session.state === "AWAITING_EMAIL_FOR_MASTER") {
@@ -503,15 +560,13 @@ async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
     psid: psid
   });
 
-  const htmlTemplate = `<!DOCTYPE html><html lang="en"><body style="font-family:Georgia,serif;background-color:#f9f7f2;margin:0;"><div style="padding:20px 0;"><div style="max-width:450px;background:#fff;border:1px solid #e0d6bc;margin:0 auto;padding:25px;text-align:center;"><h1 style="font-size:20px;letter-spacing:4px;text-transform:uppercase;">Timeless Creations</h1><h3>Account Security</h3><p>Use the 6-digit PIN below in Messenger:</p><div style="margin:20px 0;padding:15px;background-color:#fdfbf8;border:1px solid #d4c197;"><span style="font-family:Arial,sans-serif;font-size:28px;font-weight:bold;letter-spacing:6px;">${generatedOTP}</span></div></div></div></body></html>`;
+  const appUrl = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_SERVICE_NAME || 'mission-perks'}.onrender.com`;
+  const unsubscribeLink = `${appUrl}/unsubscribe?email=${encodeURIComponent(cleanEmail)}`;
+
+  const htmlTemplate = `<!DOCTYPE html><html lang="en"><body style="font-family:Georgia,serif;background-color:#f9f7f2;margin:0;"><div style="padding:20px 0;"><div style="max-width:450px;background:#fff;border:1px solid #e0d6bc;margin:0 auto;padding:25px;text-align:center;"><h1 style="font-size:20px;letter-spacing:4px;text-transform:uppercase;">Timeless Creations</h1><h3>Account Security</h3><p>Use the 6-digit PIN below in Messenger:</p><div style="margin:20px 0;padding:15px;background-color:#fdfbf8;border:1px solid #d4c197;"><span style="font-family:Arial,sans-serif;font-size:28px;font-weight:bold;letter-spacing:6px;">${generatedOTP}</span></div><p style="font-size:11px;color:#777;margin-top:30px;border-top:1px solid #eee;padding-top:15px;">Data Privacy Notice: Per our Terms and Data Privacy Act agreement, you are subscribed to receive monthly updates until your service or membership ends. <br><a href="${unsubscribeLink}" style="color:#b58900;">Unsubscribe here</a></p></div></div></div></body></html>`;
 
   try {
-    await transporter.sendMail({
-      from: '"Timeless Creations" <no-reply@timelesscreations.com>',
-      to: cleanEmail,
-      subject: `[${generatedOTP}] Your Verification Code`,
-      html: htmlTemplate
-    });
+    await sendEmailViaBrevo(cleanEmail, `[${generatedOTP}] Your Verification Code`, htmlTemplate);
     await incrementGlobalSignupCount();
     await incrementEmailOTPCount(cleanEmail);
   } catch (err) {
@@ -549,7 +604,7 @@ async function finalizeRegistration(psid, session, appliedRefCode) {
     email: session.email, title: session.title, lastName: session.lastName, batch: session.batch,
     refCode: userRefCode, appliedRefCode: finalRef || MASTER_REFERRAL_CODE,
     points: initialBonus, giftedPointsReceived: 0.0, passiveRefPoints: 0.0,
-    lastMinedTimestamp: "", isTester: false, registeredAt: new Date().toISOString()
+    lastMinedTimestamp: "", isTester: false, unsubscribed: false, registeredAt: new Date().toISOString()
   });
   await firebasePut(`refToPsid/${userRefCode}`, psid);
   await firebasePut(`emails/${session.email.replace(/\./g, ',')}`, psid);
@@ -580,7 +635,7 @@ async function grantTesterAccess(psid) {
       email: `tester_${psid}@internal.dev`, title: "ADMIN", lastName: "TESTER", batch: "N/A",
       refCode: adminRefCode, appliedRefCode: MASTER_REFERRAL_CODE,
       points: ADMIN_STARTING_POINTS, giftedPointsReceived: 0.0, passiveRefPoints: 0.0,
-      lastMinedTimestamp: "", isTester: true, registeredAt: new Date().toISOString()
+      lastMinedTimestamp: "", isTester: true, unsubscribed: false, registeredAt: new Date().toISOString()
     });
     await firebasePut(`refToPsid/${adminRefCode}`, psid);
   } else {
