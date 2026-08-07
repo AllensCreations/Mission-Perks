@@ -10,7 +10,13 @@ require('dotenv').config();
 const app = express();
 app.use(bodyParser.json());
 
-const cache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
+// 💡 Improved safety limit: added maxKeys to prevent OOM memory leaks
+const cache = new NodeCache({ stdTTL: 600, checkperiod: 120, maxKeys: 10000 });
+
+// Global Unhandled Rejection safety net
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // ==========================================
 // 1. CONFIGURATION & SYSTEM CONSTANTS
@@ -373,13 +379,13 @@ async function setupMessengerProfile() {
           },
           {
             "type": "postback",
-            "title": "⚙️ Settings",
-            "payload": "MENU_SETTINGS"
+            "title": "💌 Invite",
+            "payload": "MENU_INVITE"
           },
           {
             "type": "postback",
-            "title": "💌 Invite",
-            "payload": "MENU_INVITE"
+            "title": "🛑 Unsubscribe (5p)",
+            "payload": "MENU_UNSUBSCRIBE"
           }
         ]
       }
@@ -408,7 +414,8 @@ function getDashboardQuickReplies(currentContext) {
     { title: "📁 Vault", payload: "NAV_VAULT" },
     { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" },
     { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" },
-    { title: "🛑 Unsubscribe (5p)", payload: "NAV_UNSUBSCRIBE" }
+    { title: "🎁 Daily Redeem", payload: "NAV_DAILY_REDEEM" },
+    { title: "💌 Invite & Redeem", payload: "NAV_INVITE_REDEEM" }
   ];
   return allButtons.filter(btn => btn.payload !== currentContext);
 }
@@ -452,17 +459,18 @@ async function handleIncomingMessage(psid, text) {
   if (trimmedUpper === "MENU_TC") {
     return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C)\n------------------\nIn compliance with the Data Privacy Act, by participating in MissionPerks you agree to receive monthly mail updates until your service or membership ends, unless you opt to use the paid unsubscription feature.");
   }
-  if (trimmedUpper === "MENU_SETTINGS") {
+  if (trimmedUpper === "MENU_UNSUBSCRIBE") {
     const userCheck = await getUserRecord(psid);
-    if (!userCheck) return sendTextMessage(psid, "⚙️ SETTINGS\n------------------\nYou are not registered yet. Send 'Get Started' to begin.");
-    return sendQuickReplies(psid, `⚙️ SETTINGS\n------------------\n• Member: ${userCheck.title} ${userCheck.lastName}\n• Balance: ${userCheck.points.toFixed(1)} Pts\n\nNeed to unsubscribe or reset?`, [
-      { title: "🛑 Unsubscribe (5p)", payload: "NAV_UNSUBSCRIBE" },
-      { title: "📊 Dashboard", payload: "NAV_STATUS" }
-    ]);
+    if (!userCheck) return sendTextMessage(psid, "🛑 UNSUBSCRIBE\n------------------\nYou are not registered yet.");
+    return promptPaidUnsubscribe(psid, userCheck);
   }
   if (trimmedUpper === "MENU_INVITE") {
     const userCheck = await getUserRecord(psid);
-    if (!userCheck) return sendTextMessage(psid, "💌 INVITE\n------------------\nPlease register first using 'Get Started' to get your personal invitation key!");
+    if (!userCheck) {
+      return sendQuickReplies(psid, "💌 INVITE\n------------------\nPlease register first using 'Get Started' to get your personal invitation key!", [
+        { title: "Get Started", payload: "GET_STARTED" }
+      ]);
+    }
     const stats = getInviteStats(userCheck);
     return sendQuickReplies(psid, `💌 INVITE HUB\n------------------\n🔑 Your Key: ${userCheck.refCode}\n👥 Progress: ${stats.total} / ${MAX_REFERRALS_PER_USER} Invites\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${userCheck.refCode}`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
@@ -481,7 +489,6 @@ async function handleIncomingMessage(psid, text) {
       }
       return displayDashboard(psid, userCheck);
     }
-    // 🛑 Get Started Quick Greeting Message with returned Quick Replies (Main Navigations & Options)
     return sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, tap below or reply with: NO_REF_CODE)`, [
       { title: "🚀 Get Started", payload: "GET_STARTED" },
       { title: "❓ No Code", payload: "NO_REF_CODE" },
@@ -905,7 +912,7 @@ async function displayDashboard(psid, user) {
 
 function displayInviteAndRedeemHub(psid, user) {
   const stats = getInviteStats(user);
-  let instructionsMsg = `💌 INVITE & DAILY REDEEM HUB\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} / ${MAX_REFERRALS_PER_USER} Invites\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!\n\n⚠️ Note: If the link doesn't open on some devices, copy this whole message and paste it in the chat!\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${user.refCode}`;
+  let instructionsMsg = `💌 INVITE HUB & REDEEM\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} / ${MAX_REFERRALS_PER_USER} Invites\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${user.refCode}`;
   
   sendQuickReplies(psid, instructionsMsg, [
     { title: "🎁 Claim Daily Redeem", payload: "NAV_DAILY_REDEEM" },
@@ -916,7 +923,7 @@ function displayInviteAndRedeemHub(psid, user) {
 }
 
 // ==========================================
-// 11. DAILY REDEEM ENGINE (Tier-Balanced)
+// 11. DAILY REDEEM ENGINE (Tier-Balanced) + Auto-Back & Invite Prompt
 // ==========================================
 async function processDailyRedeem(psid, user) {
   const now = new Date();
@@ -947,8 +954,12 @@ async function processDailyRedeem(psid, user) {
     
     await distributeDailyYieldCommissions(psid, dailyRate);
 
-    sendQuickReplies(psid, `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points`, getDashboardQuickReplies("NAV_DAILY_REDEEM"));
-    sendTextMessage(psid, `💌 WANT MORE POINTS?\nInvite friends using your key to unlock passive commissions up to Level 3!\n\n🔑 Your Invite Key: ${latestUser.refCode}\n👉 Share this link: ${REFERRAL_BASE_URL}?ref=${latestUser.refCode}`);
+    // 💡 Auto-back & invite prompt integration after successful claim
+    sendQuickReplies(psid, `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points\n\nWant to add more? Invite friends using your key to earn rewards and unlock daily bonuses!\n\n🔑 Your Key: ${latestUser.refCode}\n👉 Share link: ${REFERRAL_BASE_URL}?ref=${latestUser.refCode}`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" },
+      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
+    ]);
     
   } finally {
     releaseUserLock(psid);
@@ -984,23 +995,37 @@ async function processJoinRewardRoom(psid, user) {
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const roomRef = db.ref(`reward_room/${todayStr}`);
-    const snapshot = await roomRef.get();
-    let room = snapshot.exists() ? snapshot.val() : { participants: {}, ticketCount: 0, drawn: false };
+    
+    // 💡 Applied atomic transaction to eliminate concurrency race conditions
+    let transactionSuccess = false;
+    let newBalance = latestUser.points;
 
-    if (room.drawn) return sendQuickReplies(psid, `⚠️ Today's room has already concluded. A new room will open soon!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
-    if (room.ticketCount >= REWARD_ROOM_CAPACITY) return sendQuickReplies(psid, `⚠️ Room is full (${REWARD_ROOM_CAPACITY}/${REWARD_ROOM_CAPACITY} tickets)! Draw will happen at the next scheduled time (8am / 1pm).`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    await roomRef.transaction((currentRoom) => {
+      if (!currentRoom) {
+        currentRoom = { participants: {}, ticketCount: 0, drawn: false };
+      }
+      if (currentRoom.drawn || currentRoom.ticketCount >= REWARD_ROOM_CAPACITY) {
+        return; // Abort
+      }
+      const currentTickets = currentRoom.participants[psid] || 0;
+      if (currentTickets >= MAX_ROOM_TICKETS_PER_USER) {
+        return; // Abort limit reached
+      }
+      currentRoom.participants[psid] = currentTickets + 1;
+      currentRoom.ticketCount++;
+      transactionSuccess = true;
+      return currentRoom;
+    });
 
-    const currentTickets = room.participants[psid] || 0;
-    if (currentTickets >= MAX_ROOM_TICKETS_PER_USER) {
-      return sendQuickReplies(psid, `⚠️ Ticket Limit Reached: You can only buy a maximum of ${MAX_ROOM_TICKETS_PER_USER} ticket per room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    if (!transactionSuccess) {
+      return sendQuickReplies(psid, `⚠️ Unable to buy ticket: Room may be full, already drawn, or you have already purchased your ticket limit.`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
     }
 
-    const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
+    newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
     await updateCachedUser(psid, { points: newBalance });
 
-    room.participants[psid] = currentTickets + 1;
-    room.ticketCount = (room.ticketCount || 0) + 1;
-    await roomRef.set(room);
+    const updatedSnapshot = await roomRef.get();
+    const room = updatedSnapshot.val();
 
     if (room.ticketCount >= REWARD_ROOM_CAPACITY) {
       await executeRewardRoomDraw(todayStr, room);
@@ -1416,13 +1441,17 @@ async function processRedeemCode(psid, promoCode, user) {
     const newBalance = user.points + parseFloat(codeRecord.value || 0);
     await updateCachedUser(psid, { points: newBalance });
 
-    sendQuickReplies(psid, `🎉 CODE CLAIMED!\n------------------\n• Code: ${promoCode}\n• Reward: +${parseFloat(codeRecord.value || 0).toFixed(1)} Pts\n• Balance: ${newBalance.toFixed(1)} Pts`, getDashboardQuickReplies("NONE"));
+    // 💡 Auto-back feature after claiming code successfully
+    sendQuickReplies(psid, `🎉 CODE CLAIMED!\n------------------\n• Code: ${promoCode}\n• Reward: +${parseFloat(codeRecord.value || 0).toFixed(1)} Pts\n• Balance: ${newBalance.toFixed(1)} Pts`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
+    ]);
   } finally { releaseUserLock(psid); }
 }
 
 async function handleGiftingCommand(psid, text, session) {
   const user = await getUserRecord(psid);
-  if (user.points < GIFTING_UNLOCK_THRESHOLD && !user.isTester) return sendQuickReplies(psid, `🔒 Locked: Point transfers require ${GIFTING_UNLOCK_THRESHOLD} pts.`, getDashboardQuickReplies("NONE"));
+  if (user.points < GIFTING_UNLOCK_THRESHOLD && !user.isTester) return sendQuickReplies(psid, `🔒 Locked: Point transfers require ${GIFTING_UNLOCK_THRESHOLD} pts.`, getDashboardQuickReplies("NAV_STATUS"));
   setSession(psid, { state: "AWAITING_GIFT_DETAILS" });
   sendQuickReplies(psid, `🎁 POINT TRANSFERS\nEnter recipient Ref Code and amount:\nExample: KJL482 5`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
 }
@@ -1454,7 +1483,11 @@ async function processGiftSubmission(psid, text, session) {
     } finally { releaseUserLock(recipient.psid); }
 
     clearSession(psid);
-    sendQuickReplies(psid, `🎁 Sent ${giftAmount} pts to ${targetRefCode}.`, getDashboardQuickReplies("NONE"));
+    // 💡 Auto-back feature after sending gift
+    sendQuickReplies(psid, `🎁 Sent ${giftAmount} pts to ${targetRefCode}.`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
+    ]);
     sendTextMessage(recipient.psid, `🎁 Received ${giftAmount} points from a friend!`);
   } finally { releaseUserLock(psid); }
 }
