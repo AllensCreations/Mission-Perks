@@ -33,10 +33,11 @@ const MAX_ACTIVE_VAULT_VOUCHERS = 10;
 
 const UNSUBSCRIBE_POINT_COST = 5.0;        
 const REWARD_ROOM_TICKET_COST = 10.0;    
-const MAX_ROOM_TICKETS_PER_USER = 3;     
-const REWARD_ROOM_CAPACITY = 100;          
+const MAX_ROOM_TICKETS_PER_USER = 1;     // 🔄 Capped at 1 ticket max per user per room
+const REWARD_ROOM_CAPACITY = 50;           // 🔄 Updated capacity to 50 participants max
 const REWARD_ROOM_WINNERS_COUNT = 5;       
-const REWARD_ROOM_PRIZE_POOL = 500.0;      
+const REWARD_ROOM_WINNER_SHARE = 0.80;     // 🔄 Winners split 80% of accumulated pool
+const REWARD_ROOM_BURN_SHARE = 0.20;     // 🔄 20% of pool is burned permanently
 
 const MASTER_REFERRAL_CODE = "TCM999"; 
 const ADMIN_UNLOCK_CODE = "SIRGINPERALTA";
@@ -201,7 +202,6 @@ app.get('/unsubscribe', async (req, res) => {
   const psid = await firebaseGet(`emails/${cleanEmailKey}`);
   
   if (psid) {
-    // Soft unsubscribe: update flag instead of deleting record to protect invite/referral chain
     await firebasePatch(`users/${psid}`, { unsubscribed: true });
     cache.del("USER_" + psid);
 
@@ -378,6 +378,12 @@ async function handleIncomingMessage(psid, text) {
     const userCheck = await getUserRecord(psid);
     if (userCheck) {
       clearSession(psid);
+      // 🛑 If user is unsubscribed, restrict all navigation and force back to Get Started state view
+      if (userCheck.unsubscribed) {
+        return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYour account is currently unsubscribed. You cannot access dashboard features.\n\nType "Get Started" or re-register to reactivate.`, [
+          { title: "Get Started", payload: "GET_STARTED" }
+        ]);
+      }
       return displayDashboard(psid, userCheck);
     }
     sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)`, [{ title: "❓ I Don't Have a Code", payload: "NO_REF_CODE" }]);
@@ -408,6 +414,14 @@ async function handleIncomingMessage(psid, text) {
   const user = await getUserRecord(psid);
 
   if (user) {
+    // 🛑 Hard Gate: If user is unsubscribed, block all navigation and force Get Started prompt
+    if (user.unsubscribed) {
+      clearSession(psid);
+      return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYou have unsubscribed from MissionPerks. All dashboard navigation is locked.\n\nType "Get Started" to restart or re-register.`, [
+        { title: "Get Started", payload: "GET_STARTED" }
+      ]);
+    }
+
     if (trimmedUpper === "NAV_STATUS" || trimmedUpper === "/START" || trimmedUpper === "GET_STARTED") {
       clearSession(psid);
       return displayDashboard(psid, user);
@@ -610,19 +624,12 @@ async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
   const typoDomains = ["gamil.com", "gmal.com", "yaho.com", "hotmial.com", "outlok.com"];
   if (typoDomains.includes(emailDomain)) return sendTextMessage(psid, `❌ Email Typo Detected: Did you mean @${emailDomain.replace("gamil", "gmail").replace("gmal", "gmail").replace("yaho", "yahoo").replace("hotmial", "hotmail").replace("outlok", "outlook")}?`);
 
-  // Check if previously registered (supports returning unsubscribed users)
   const existingPsid = await firebaseGet(`emails/${cleanEmail.replace(/\./g, ',')}`);
   if (existingPsid) {
     const existingUser = await getUserRecord(existingPsid);
     if (existingUser && existingUser.unsubscribed) {
-      // Welcome back flow for returning users (no rewards or bonus vouchers issued)
       await updateCachedUser(existingPsid, { unsubscribed: false });
       clearSession(psid);
-      
-      // Re-map firebase user data to current PSID if user logged in from a new messenger session
-      if (existingPsid !== psid) {
-        // Migrate records if necessary or just load existing dashboard
-      }
 
       sendTextMessage(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nYour account has been reactivated successfully. (Note: No new registration rewards are issued for returning accounts).\n\nOpening Dashboard:`);
       return displayDashboard(psid, await getUserRecord(existingPsid));
@@ -691,10 +698,6 @@ async function finalizeRegistration(psid, session, appliedRefCode) {
   await firebasePut(`refToPsid/${userRefCode}`, psid);
   await firebasePut(`emails/${session.email.replace(/\./g, ',')}`, psid);
 
-  // Format and send to Google Sheet 'New Mails' Tab
-  // Column A: Year and Month (e.g. "2025 July")
-  // Column B: Prefix formatted as {Title} {Last Name} (e.g. "Elder Encinares")
-  // Column C: Email
   const batchParts = session.batch.trim().split(/\s+/);
   const formattedYearMonth = batchParts.length >= 2 ? `${batchParts[1]} ${batchParts[0]}` : session.batch;
   const prefixLnameFormatted = `${session.title.charAt(0).toUpperCase() + session.title.slice(1).toLowerCase()} ${session.lastName}`;
@@ -838,15 +841,16 @@ async function processDailyRedeem(psid, user) {
 }
 
 // ==========================================
-// 11. REWARD ROOM FEATURE
+// 11. REWARD ROOM FEATURE (50 Capacity, 1 Ticket Max, 80% Win / 20% Burn)
 // ==========================================
 async function displayRewardRoom(psid, user) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const roomData = await firebaseGet(`reward_room/${todayStr}`) || { participants: {}, ticketCount: 0 };
   const userTickets = roomData.participants[psid] || 0;
   const totalTickets = roomData.ticketCount || 0;
+  const accumulatedPool = totalTickets * REWARD_ROOM_TICKET_COST;
 
-  let msg = `🎰 REWARD ROOM LOBBY\n------------------\n🎯 Room Capacity: ${totalTickets} / ${REWARD_ROOM_CAPACITY} Tickets\n🎟️ Your Tickets: ${userTickets} / ${MAX_ROOM_TICKETS_PER_USER}\n💰 Ticket Cost: ${REWARD_ROOM_TICKET_COST} Pts\n🏆 Prize Pool: ${REWARD_ROOM_PRIZE_POOL} Pts (${REWARD_ROOM_WINNERS_COUNT} Winners x 100 Pts each!)\n\n⏰ DRAW SCHEDULE:\nDraws are automatically executed when full or on the next day at 8:00 AM & 1:00 PM sharp!\n------------------\nTap below to buy tickets:`;
+  let msg = `🎰 REWARD ROOM LOBBY\n------------------\n🎯 Room Capacity: ${totalTickets} / ${REWARD_ROOM_CAPACITY} Tickets\n🎟️ Your Tickets: ${userTickets} / ${MAX_ROOM_TICKETS_PER_USER}\n💰 Ticket Cost: ${REWARD_ROOM_TICKET_COST} Pts\n🏆 Accumulated Pool: ${accumulatedPool} Pts\n• 80% Split among ${REWARD_ROOM_WINNERS_COUNT} winners\n• 20% Burned permanently\n\n⏰ DRAW SCHEDULE:\nDraws execute automatically when full or at 8:00 AM / 1:00 PM sharp!\n------------------\nTap below to buy ticket:`;
 
   sendQuickReplies(psid, msg, [
     { title: "🎟️ Buy Ticket (10p)", payload: "JOIN_REWARD_ROOM" },
@@ -873,7 +877,7 @@ async function processJoinRewardRoom(psid, user) {
 
     const currentTickets = room.participants[psid] || 0;
     if (currentTickets >= MAX_ROOM_TICKETS_PER_USER) {
-      return sendQuickReplies(psid, `⚠️ Ticket Limit Reached: You can only buy a maximum of ${MAX_ROOM_TICKETS_PER_USER} tickets per room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+      return sendQuickReplies(psid, `⚠️ Ticket Limit Reached: You can only buy a maximum of ${MAX_ROOM_TICKETS_PER_USER} ticket per room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
     }
 
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
@@ -887,10 +891,9 @@ async function processJoinRewardRoom(psid, user) {
       await executeRewardRoomDraw(todayStr, room);
     }
 
-    const updatedUserTickets = room.participants[psid];
-    sendQuickReplies(psid, `🎉 TICKET PURCHASED!\n------------------\n• Tickets Owned: ${updatedUserTickets} / ${MAX_ROOM_TICKETS_PER_USER}\n• Total Room Tickets: ${room.ticketCount} / ${REWARD_ROOM_CAPACITY}\n• Remaining Balance: ${newBalance.toFixed(1)} Pts`, [
-      { title: "🎟️ Buy Another", payload: "JOIN_REWARD_ROOM" },
-      { title: "📊 Dashboard", payload: "NAV_STATUS" }
+    sendQuickReplies(psid, `🎉 TICKET PURCHASED!\n------------------\n• Tickets Owned: ${room.participants[psid]} / ${MAX_ROOM_TICKETS_PER_USER}\n• Total Room Tickets: ${room.ticketCount} / ${REWARD_ROOM_CAPACITY}\n• Remaining Balance: ${newBalance.toFixed(1)} Pts`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" }
     ]);
   } finally {
     releaseUserLock(psid);
@@ -926,28 +929,32 @@ async function executeRewardRoomDraw(todayStr, room) {
     }
   }
 
-  const individualPrize = REWARD_ROOM_PRIZE_POOL / REWARD_ROOM_WINNERS_COUNT;
+  const accumulatedPool = room.ticketCount * REWARD_ROOM_TICKET_COST;
+  const distributablePool = accumulatedPool * REWARD_ROOM_WINNER_SHARE; // 80%
+  const burnedPool = accumulatedPool * REWARD_ROOM_BURN_SHARE; // 20%
+  const individualPrize = winners.length > 0 ? distributablePool / winners.length : 0;
 
   for (const winnerPsid of winners) {
     const winnerUser = await getUserRecord(winnerPsid);
     if (winnerUser) {
       const newWinBalance = winnerUser.points + individualPrize;
       await updateCachedUser(winnerPsid, { points: newWinBalance });
-      sendTextMessage(winnerPsid, `🏆 REWARD ROOM JACKPOT WINNER! 🎉\n------------------\nCongratulations! You won the Reward Room draw!\n• Prize: +${individualPrize.toFixed(1)} Pts\n• New Balance: ${newWinBalance.toFixed(1)} Pts`);
+      sendTextMessage(winnerPsid, `🏆 REWARD ROOM JACKPOT WINNER! 🎉\n------------------\nCongratulations! You won the Reward Room draw!\n• Prize (80% Share): +${individualPrize.toFixed(1)} Pts\n• New Balance: ${newWinBalance.toFixed(1)} Pts`);
     }
   }
+  console.log(`Reward Room Draw Executed. Pool: ${accumulatedPool} Pts. Distributed: ${distributablePool} Pts. Burned (20%): ${burnedPool} Pts.`);
 }
 
 // ==========================================
-// 12. PAID UNSUBSCRIBE FEATURE WITH WARNING
+// 12. PAID UNSUBSCRIBE FEATURE WITH WARNING & RESTRAINT
 // ==========================================
 async function promptPaidUnsubscribe(psid, user) {
-  if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", getDashboardQuickReplies("NAV_STATUS"));
+  if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", [{ title: "Get Started", payload: "GET_STARTED" }]);
   if (user.points < UNSUBSCRIBE_POINT_COST && !user.isTester) {
     return sendQuickReplies(psid, `❌ Insufficient Points: Unsubscribing costs ${UNSUBSCRIBE_POINT_COST} Pts. You currently have ${user.points.toFixed(1)} Pts.`, getDashboardQuickReplies("NAV_STATUS"));
   }
 
-  sendQuickReplies(psid, `🛑 WARNING: PAID UNSUBSCRIBE\n------------------\nBy unsubscribing, you will remove your monthly email updates you receive from us.\n\nThis action costs ${UNSUBSCRIBE_POINT_COST} Pts. Your account status will be marked as unsubscribed while preserving network integrity.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
+  sendQuickReplies(psid, `🛑 WARNING: PAID UNSUBSCRIBE\n------------------\nBy unsubscribing, you will remove your monthly email updates you receive from us. Furthermore, all dashboard navigation will be locked and redirected to Get Started.\n\nThis action costs ${UNSUBSCRIBE_POINT_COST} Pts.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
     { title: "🛑 Confirm Unsubscribe", payload: "CONFIRM_UNSUBSCRIBE" },
     { title: "📊 Dashboard", payload: "NAV_STATUS" }
   ]);
@@ -962,13 +969,12 @@ async function processPaidUnsubscribe(psid, user) {
     }
 
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - UNSUBSCRIBE_POINT_COST;
+    // Mark as soft unsubscribed so invite system integrity and history are preserved
     await updateCachedUser(psid, { points: newBalance, unsubscribed: true });
 
-    // Slight disadvantage adjustment for the direct upline if applicable
     if (latestUser.appliedRefCode && latestUser.appliedRefCode !== MASTER_REFERRAL_CODE) {
       const uplineUser = await getUserRecordByRefCode(latestUser.appliedRefCode);
       if (uplineUser) {
-        // Example slight adjustment (e.g., small reduction in passive ref points tracking)
         const adjustedPassive = Math.max(0, (uplineUser.passiveRefPoints || 0) - 1.0);
         await updateCachedUser(uplineUser.psid, { passiveRefPoints: adjustedPassive });
         sendTextMessage(uplineUser.psid, `⚠️ Network Notice: One of your invited downline members has unsubscribed.`);
@@ -976,7 +982,10 @@ async function processPaidUnsubscribe(psid, user) {
     }
 
     clearSession(psid);
-    sendTextMessage(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYou will no longer receive monthly email updates.`);
+    // 🛑 Lock navigation and force back to Get Started state view
+    sendQuickReplies(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYou will no longer receive monthly email updates and your dashboard access is now locked.\n\nType "Get Started" to restart.`, [
+      { title: "Get Started", payload: "GET_STARTED" }
+    ]);
   } finally {
     releaseUserLock(psid);
   }
@@ -987,7 +996,7 @@ async function processPaidUnsubscribe(psid, user) {
 // ==========================================
 async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
-  if (!referrer || referrer.psid === newPsid) return;
+  if (!referrer || referrer.psid === newPsid || referrer.unsubscribed) return; // Don't give commission to unsubscribed uplines
 
   const isMissionary = newUserEmail && newUserEmail.toLowerCase().endsWith("@missionary.org");
   const directReward = isMissionary ? 10.0 : 2.0;
@@ -1014,7 +1023,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
   const user1 = await getUserRecord(originPsid);
   if (!user1 || !user1.appliedRefCode) return;
   const upline1 = await getUserRecordByRefCode(user1.appliedRefCode);
-  if (!upline1 || upline1.psid === originPsid) return;
+  if (!upline1 || upline1.psid === originPsid || upline1.unsubscribed) return;
 
   const l1Bonus = baseAmount * 0.10;
   await updateCachedUser(upline1.psid, { points: upline1.points + l1Bonus });
@@ -1022,7 +1031,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
 
   if (!upline1.appliedRefCode) return;
   const upline2 = await getUserRecordByRefCode(upline1.appliedRefCode);
-  if (!upline2 || upline2.psid === upline1.psid) return;
+  if (!upline2 || upline2.psid === upline1.psid || upline2.unsubscribed) return;
 
   const l2Bonus = baseAmount * 0.05;
   await updateCachedUser(upline2.psid, { points: upline2.points + l2Bonus });
@@ -1030,7 +1039,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
 
   if (!upline2.appliedRefCode) return;
   const upline3 = await getUserRecordByRefCode(upline2.appliedRefCode);
-  if (!upline3 || upline3.psid === upline2.psid) return;
+  if (!upline3 || upline3.psid === upline2.psid || upline3.unsubscribed) return;
 
   const l3Bonus = baseAmount * 0.025;
   await updateCachedUser(upline3.psid, { points: upline3.points + l3Bonus });
