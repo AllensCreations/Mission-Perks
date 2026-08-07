@@ -348,7 +348,58 @@ function setDirectRef(psid, refCode) { cache.set("DIRECT_REF_" + psid, refCode, 
 function getDirectRef(psid) { return cache.get("DIRECT_REF_" + psid); }
 
 // ==========================================
-// 5. DYNAMIC QUICK REPLY BUILDER
+// 5. AUTOMATICALLY CONFIGURE MESSENGER PROFILE (Persistent Menu & Get Started)
+// ==========================================
+async function setupMessengerProfile() {
+  const token = process.env.PAGE_ACCESS_TOKEN;
+  if (!token) return;
+
+  const profilePayload = {
+    "get_started": { "payload": "GET_STARTED" },
+    "persistent_menu": [
+      {
+        "locale": "default",
+        "composer_input_disabled": false,
+        "call_to_actions": [
+          {
+            "type": "postback",
+            "title": "ℹ️ About",
+            "payload": "MENU_ABOUT"
+          },
+          {
+            "type": "postback",
+            "title": "⚖️ T&C",
+            "payload": "MENU_TC"
+          },
+          {
+            "type": "postback",
+            "title": "⚙️ Settings",
+            "payload": "MENU_SETTINGS"
+          },
+          {
+            "type": "postback",
+            "title": "💌 Invite",
+            "payload": "MENU_INVITE"
+          }
+        ]
+      }
+    ]
+  };
+
+  try {
+    await fetch(`https://graph.facebook.com/v20.0/me/messenger_profile?access_token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profilePayload)
+    });
+    console.log("✅ Messenger Profile (Get Started & Persistent Menu) configured successfully.");
+  } catch (e) {
+    console.error("Messenger Profile Setup Error: ", e);
+  }
+}
+
+// ==========================================
+// 6. DYNAMIC QUICK REPLY BUILDER (Main Navigations)
 // ==========================================
 function getDashboardQuickReplies(currentContext) {
   let allButtons = [
@@ -362,7 +413,7 @@ function getDashboardQuickReplies(currentContext) {
 }
 
 // ==========================================
-// 6. MAIN ROUTER & CONVERSATION GATEKEEPER
+// 7. MAIN ROUTER & CONVERSATION GATEKEEPER
 // ==========================================
 async function handleIncomingMessage(psid, text) {
   if (isSpamming(psid)) return sendTextMessage(psid, "🛑 Security Notice: High message frequency detected. Please wait a few seconds.");
@@ -377,7 +428,7 @@ async function handleIncomingMessage(psid, text) {
   // 🛑 Master Complete Wipe Admin Command with Confirmation Password "OMSIM"
   if (trimmedUpper.startsWith("/ADMIN SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA")) {
     const passwordParts = text.trim().split(/\s+/);
-    const providedPassword = passwordParts[passwordParts.length - 1]; // Last token is expected password "OMSIM"
+    const providedPassword = passwordParts[passwordParts.length - 1];
 
     if (providedPassword !== "OMSIM") {
       return sendTextMessage(psid, "❌ Master Wipe Denied: Incorrect confirmation password. Usage: /Admin SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA OMSIM");
@@ -393,6 +444,31 @@ async function handleIncomingMessage(psid, text) {
     return sendTextMessage(psid, "⚠️ SYSTEM RESTARTED: All users, keys, emails, vaults, and rooms have been completely wiped from Firebase.");
   }
 
+  // Persistent Menu Option Handlers
+  if (trimmedUpper === "MENU_ABOUT") {
+    return sendTextMessage(psid, "ℹ️ ABOUT THE APP & CREATOR\n------------------\nHi! I'm Mark Allen B. Salviejo, BSEE major. Thank you for using my Messenger Bot! This bot is just one of my 3 AM thoughts, and I can't even believe it works.\n\nIf you want to automate your Messenger bot, please contact me at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!");
+  }
+  if (trimmedUpper === "MENU_TC") {
+    return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C)\n------------------\nIn compliance with the Data Privacy Act, by participating in MissionPerks you agree to receive monthly mail updates until your service or membership ends, unless you opt to use the paid unsubscription feature.");
+  }
+  if (trimmedUpper === "MENU_SETTINGS") {
+    const userCheck = await getUserRecord(psid);
+    if (!userCheck) return sendTextMessage(psid, "⚙️ SETTINGS\n------------------\nYou are not registered yet. Send 'Get Started' to begin.");
+    return sendQuickReplies(psid, `⚙️ SETTINGS\n------------------\n• Member: ${userCheck.title} ${userCheck.lastName}\n• Balance: ${userCheck.points.toFixed(1)} Pts\n\nNeed to unsubscribe or reset?`, [
+      { title: "🛑 Unsubscribe (5p)", payload: "NAV_UNSUBSCRIBE" },
+      { title: "📊 Dashboard", payload: "NAV_STATUS" }
+    ]);
+  }
+  if (trimmedUpper === "MENU_INVITE") {
+    const userCheck = await getUserRecord(psid);
+    if (!userCheck) return sendTextMessage(psid, "💌 INVITE\n------------------\nPlease register first using 'Get Started' to get your personal invitation key!");
+    const stats = getInviteStats(userCheck);
+    return sendQuickReplies(psid, `💌 INVITE HUB\n------------------\n🔑 Your Key: ${userCheck.refCode}\n👥 Progress: ${stats.total} / ${MAX_REFERRALS_PER_USER} Invites\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${userCheck.refCode}`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
+    ]);
+  }
+
   if (trimmedUpper === "GET_STARTED" || trimmedUpper === "/START") {
     const userCheck = await getUserRecord(psid);
     if (userCheck) {
@@ -404,7 +480,7 @@ async function handleIncomingMessage(psid, text) {
       }
       return displayDashboard(psid, userCheck);
     }
-    // 🛑 Registration Phase: Send pure text message with NO menu options to prevent wrong touches!
+    // Get Started Quick Greeting Message
     return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
   }
 
@@ -472,7 +548,7 @@ async function handleIncomingMessage(psid, text) {
     if (trimmedUpper.startsWith("FREEBIE_REDEEM_")) return processFreebieRedeem(psid, parseInt(trimmedUpper.replace("FREEBIE_REDEEM_", "").trim(), 10), user);
     if (trimmedUpper.startsWith("CONFIRM_APPLY_")) return initiateVoucherApplyFlow(psid, trimmedUpper.replace("CONFIRM_APPLY_", "").trim(), user);
     if (trimmedUpper.startsWith("APPLY_PROMPT_")) return promptVoucherWarning(psid, trimmedUpper.replace("APPLY_PROMPT_", "").trim());
-    if (trimmedUpper.startsWith("/REDEEM" ) || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
+    if (trimmedUpper.startsWith("/REDEEM") || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
     if (trimmedUpper.startsWith("/APPLY")) return promptVoucherWarning(psid, text.replace(/\/apply/i, "").trim().toUpperCase());
 
     return displayDashboard(psid, user);
@@ -484,7 +560,6 @@ async function handleIncomingMessage(psid, text) {
   if (!session) {
     if (trimmedUpper === "NO_REF_CODE") {
       setSession(psid, { state: "AWAITING_CONSENT" });
-      // 🛑 Registration Phase Consent: Use plain text instruction without interactive quick replies to avoid accidental touches
       return sendTextMessage(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nType "AGREE" to accept these terms and continue (or type CANCEL to abort):`);
     }
 
@@ -503,7 +578,6 @@ async function handleIncomingMessage(psid, text) {
       }
     }
 
-    // 🛑 Registration Phase Initial Prompt: Plain text only
     return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
   }
 
@@ -536,7 +610,6 @@ async function handleIncomingMessage(psid, text) {
   if (session.state === "AWAITING_OTP") return processOTPVerification(psid, text.trim(), session);
   if (session.state === "AWAITING_TITLE") {
     if (trimmedUpper !== "ELDER" && trimmedUpper !== "SISTER" && trimmedUpper !== "BROTHER") {
-      // 🛑 Registration Phase Title Selection: Text instructions instead of buttons to prevent accidental clicks
       return sendTextMessage(psid, "❌ Please reply by typing 'Elder', 'Sister', or 'Brother':");
     }
     session.title = trimmedUpper;
@@ -558,7 +631,7 @@ async function handleIncomingMessage(psid, text) {
 }
 
 // ==========================================
-// 7. FIREBASE GETTERS & LOCAL CACHING
+// 8. FIREBASE GETTERS & LOCAL CACHING
 // ==========================================
 async function getUserRecord(psid) {
   const cached = cache.get("USER_" + psid);
@@ -628,7 +701,7 @@ function generateBOMVoucherCode(psid) {
 }
 
 // ==========================================
-// 8. REGISTRATION & OTP FLOWS
+// 9. REGISTRATION & OTP FLOWS
 // ==========================================
 async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
   if (!(await checkGlobalSignupLimit())) return sendTextMessage(psid, `⚠️ Daily Sign-Up Cap Reached: Today's global registration limit (${MAX_DAILY_GLOBAL_SIGNUPS} members) has been reached.`);
@@ -689,7 +762,6 @@ function processOTPVerification(psid, userOtpInput, session) {
   session.state = "AWAITING_TITLE";
   delete session.otp;
   setSession(psid, session);
-  // 🛑 Registration Phase Title Choice: Plain text instruction to prevent accidental menu button taps
   return sendTextMessage(psid, `✅ EMAIL VERIFIED!\n------------------\n👉 STEP 2 of 4: Please type your Title ('Elder', 'Sister', or 'Brother'):`);
 }
 
@@ -789,7 +861,7 @@ async function revokeAndResetAccount(psid) {
 }
 
 // ==========================================
-// 9. DASHBOARD & UI
+// 10. DASHBOARD & UI
 // ==========================================
 async function displayDashboard(psid, user) {
   const stats = getInviteStats(user);
@@ -817,7 +889,7 @@ function displayInviteAndRedeemHub(psid, user) {
 }
 
 // ==========================================
-// 10. DAILY REDEEM ENGINE (Tier-Balanced)
+// 11. DAILY REDEEM ENGINE (Tier-Balanced)
 // ==========================================
 async function processDailyRedeem(psid, user) {
   const now = new Date();
@@ -857,7 +929,7 @@ async function processDailyRedeem(psid, user) {
 }
 
 // ==========================================
-// 11. REWARD ROOM FEATURE (50 Capacity, 1 Ticket Max, 80% Win / 20% Burn)
+// 12. REWARD ROOM FEATURE (50 Capacity, 1 Ticket Max, 80% Win / 20% Burn)
 // ==========================================
 async function displayRewardRoom(psid, user) {
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -962,7 +1034,7 @@ async function executeRewardRoomDraw(todayStr, room) {
 }
 
 // ==========================================
-// 12. PAID UNSUBSCRIBE FEATURE WITH WARNING & RESTRAINT
+// 13. PAID UNSUBSCRIBE FEATURE WITH WARNING & RESTRAINT
 // ==========================================
 async function promptPaidUnsubscribe(psid, user) {
   if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", [{ title: "Get Started", payload: "GET_STARTED" }]);
@@ -1006,7 +1078,7 @@ async function processPaidUnsubscribe(psid, user) {
 }
 
 // ==========================================
-// 13. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
+// 14. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
 // ==========================================
 async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
@@ -1061,7 +1133,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
 }
 
 // ==========================================
-// 14. UNIFIED SHOP & FREEBIES HUB
+// 15. UNIFIED SHOP & FREEBIES HUB
 // ==========================================
 async function displayShopAndFreebies(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
@@ -1184,7 +1256,7 @@ async function processFreebieRedeem(psid, idx, user) {
 }
 
 // ==========================================
-// 15. CART CHECKOUT & POS ENGINE
+// 16. CART CHECKOUT & POS ENGINE
 // ==========================================
 async function promptVoucherWarning(psid, code) {
   const vouchers = await getUserVouchers(psid);
@@ -1301,7 +1373,7 @@ function formatVoucherLabel(v) {
 }
 
 // ==========================================
-// 16. PROMO CODES & GIFTING
+// 17. PROMO CODES & GIFTING
 // ==========================================
 async function processRedeemCode(psid, promoCode, user) {
   if (!tryUserLock(psid)) return;
@@ -1361,7 +1433,7 @@ async function processGiftSubmission(psid, text, session) {
 }
 
 // ==========================================
-// 17. VAULT DISPLAY
+// 18. VAULT DISPLAY
 // ==========================================
 async function displayVoucherStorage(psid) {
   const vouchers = await getUserVouchers(psid);
@@ -1386,7 +1458,7 @@ async function displayVoucherStorage(psid) {
 }
 
 // ==========================================
-// 18. META GRAPH API (Text, Quick Replies & Images)
+// 19. META GRAPH API (Text, Quick Replies & Images)
 // ==========================================
 function sendTextMessage(psid, text) { callSendAPI({ recipient: { id: psid }, message: { text: text } }); }
 function sendQuickReplies(psid, text, qr) { callSendAPI({ recipient: { id: psid }, message: { text: text, quick_replies: qr.map(q => ({ content_type: "text", title: q.title, payload: q.payload })) } }); }
@@ -1406,9 +1478,10 @@ async function callSendAPI(payload) {
 }
 
 // ==========================================
-// 19. INITIALIZATION APP START
+// 20. INITIALIZATION APP START
 // ==========================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 MissionPerks Node.js server running on port ${PORT}`);
+  await setupMessengerProfile();
 });
