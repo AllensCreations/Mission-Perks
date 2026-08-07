@@ -19,10 +19,8 @@ process.on('unhandledRejection', (reason, promise) => {
 // ==========================================
 // 1. CONFIGURATION & SYSTEM CONSTANTS
 // ==========================================
-const MAX_PASSIVE_REFERRAL_POINTS = 100.0; 
-const GIFTING_UNLOCK_THRESHOLD = 20.0;     
 const VIP_POINT_THRESHOLD = 20.0;          
-const MONTHLY_VOUCHER_LIMIT = 15;          
+const MONTHLY_VOUCHER_LIMIT = 10;          // 🔄 Updated monthly limit to 10
 const MAX_LIFETIME_FREEBIE_CLAIMS = 2;     
 
 const MAX_DAILY_MESSAGES = 15;             
@@ -33,6 +31,7 @@ const MINING_UNLOCK_INVITES = 2;
 const MINING_COOLDOWN_HOURS = 24;         
 const MAX_REFERRALS_PER_USER = 10;        
 const TIER_2_INVITE_THRESHOLD = 10;       
+const MISSIONARY_INVITE_REQUIREMENT = 5;  // 🔄 Updated missionary signup requirement to 5 invites
 const MAX_ACTIVE_VAULT_VOUCHERS = 10;     
 
 const UNSUBSCRIBE_POINT_COST = 5.0;        
@@ -377,8 +376,8 @@ async function setupMessengerProfile() {
           },
           {
             "type": "postback",
-            "title": "💌 Invite",
-            "payload": "MENU_INVITE"
+            "title": "💌 Invite Hub",
+            "payload": "NAV_INVITE_REDEEM"
           },
           {
             "type": "postback",
@@ -404,17 +403,28 @@ async function setupMessengerProfile() {
 }
 
 // ==========================================
-// 6. DYNAMIC QUICK REPLY BUILDER (Main Navigations)
+// 6. DYNAMIC QUICK REPLY BUILDER (Main Navigations - Invite & Redeem replaced with Dashboard/Shop)
 // ==========================================
-function getDashboardQuickReplies(currentContext) {
+async function getDashboardQuickReplies(psid, currentContext) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const lastMined = await firebaseGet(`users/${psid}/lastMinedTimestamp`);
+  let alreadyClaimedToday = false;
+  if (lastMined && lastMined.startsWith(todayStr)) {
+    alreadyClaimedToday = true;
+  }
+
   let allButtons = [
     { title: "📊 Dashboard", payload: "NAV_STATUS" },
     { title: "📁 Vault", payload: "NAV_VAULT" },
     { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" },
-    { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" },
-    { title: "🎁 Daily Redeem", payload: "NAV_DAILY_REDEEM" },
-    { title: "💌 Invite & Redeem", payload: "NAV_INVITE_REDEEM" }
+    { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" }
   ];
+
+  // 💡 Temporarily hide Daily Redeem quick reply if already claimed today
+  if (!alreadyClaimedToday) {
+    allButtons.push({ title: "🎁 Daily Redeem", payload: "NAV_DAILY_REDEEM" });
+  }
+
   return allButtons.filter(btn => btn.payload !== currentContext);
 }
 
@@ -433,6 +443,10 @@ async function handleIncomingMessage(psid, text) {
 
   // 🛑 Master Complete Wipe Admin Command with Confirmation Password "OMSIM"
   if (trimmedUpper.startsWith("/ADMIN SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA")) {
+    const userCheck = await getUserRecord(psid);
+    if (!userCheck || !userCheck.isTester) {
+      return sendTextMessage(psid, "❌ Access Denied: You do not have sufficient system privileges to perform a database wipe.");
+    }
     const passwordParts = text.trim().split(/\s+/);
     const providedPassword = passwordParts[passwordParts.length - 1];
 
@@ -462,27 +476,21 @@ async function handleIncomingMessage(psid, text) {
     if (!userCheck) return sendTextMessage(psid, "🛑 UNSUBSCRIBE\n------------------\nYou are not registered yet.");
     return promptPaidUnsubscribe(psid, userCheck);
   }
-  if (trimmedUpper === "MENU_INVITE") {
+  if (trimmedUpper === "NAV_INVITE_REDEEM") {
     const userCheck = await getUserRecord(psid);
     if (!userCheck || userCheck.unsubscribed) {
       return sendQuickReplies(psid, "💌 INVITE\n------------------\nPlease register first using 'Get Started' to get your personal invitation key!", [
         { title: "Get Started", payload: "GET_STARTED" }
       ]);
     }
-    const stats = getInviteStats(userCheck);
-    return sendQuickReplies(psid, `💌 INVITE HUB\n------------------\n🔑 Your Key: ${userCheck.refCode}\n👥 Progress: ${stats.total} / ${MAX_REFERRALS_PER_USER} Invites\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${userCheck.refCode}`, [
-      { title: "📊 Dashboard", payload: "NAV_STATUS" },
-      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
-    ]);
+    return displayInviteAndRedeemHub(psid, userCheck);
   }
 
-  // 🛑 Welcome / Get Started Handler with Re-activation check for unsubscribed users
   if (trimmedUpper === "GET_STARTED" || trimmedUpper === "/START") {
     const userCheck = await getUserRecord(psid);
     if (userCheck) {
       clearSession(psid);
       if (userCheck.unsubscribed) {
-        // 💡 Trigger Reactivation Welcome Back Confirmation Flow instead of looping error message
         setSession(psid, { state: "AWAITING_REACTIVATION_CONFIRM", psid: psid });
         return sendQuickReplies(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nWe noticed your account was previously unsubscribed. Would you like to reactivate your account?\n\n🎁 Welcome Back Gift: We will refund your 5 activation points (+5.0 Pts) upon confirmation!`, [
           { title: "✅ Yes, Reactivate", payload: "CONFIRM_REACTIVATE" },
@@ -496,7 +504,7 @@ async function handleIncomingMessage(psid, text) {
       { title: "❓ No Code", payload: "NO_REF_CODE" },
       { title: "ℹ️ About", payload: "MENU_ABOUT" },
       { title: "⚖️ T&C", payload: "MENU_TC" },
-      { title: "💌 Invite", payload: "MENU_INVITE" }
+      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
     ]);
   }
 
@@ -523,13 +531,12 @@ async function handleIncomingMessage(psid, text) {
 
   let session = getSession(psid);
 
-  // 💡 Check if user is in reactivation confirmation flow
   if (session && session.state === "AWAITING_REACTIVATION_CONFIRM") {
     if (trimmedUpper === "CONFIRM_REACTIVATE" || trimmedUpper === "YES" || trimmedUpper === "AGREE") {
       const targetPsid = session.psid;
       const targetUser = await getUserRecord(targetPsid);
       if (targetUser) {
-        const refundedPoints = targetUser.points + 5.0; // Refund the 5 unsub points as welcome back gift
+        const refundedPoints = targetUser.points + 5.0; 
         await updateCachedUser(targetPsid, { unsubscribed: false, points: refundedPoints });
         clearSession(psid);
         sendTextMessage(psid, `🎉 ACCOUNT REACTIVATED!\n------------------\n🎁 Welcome Back Gift Added: +5.0 Pts Refunded!\n• New Balance: ${refundedPoints.toFixed(1)} Pts\n\nOpening Dashboard:`);
@@ -564,7 +571,6 @@ async function handleIncomingMessage(psid, text) {
         return displayDashboard(psid, user);
       }
       if (session.state === "AWAITING_CART_INPUT") return processCartCheckout(psid, text, user, session);
-      if (session.state === "AWAITING_GIFT_DETAILS") return processGiftSubmission(psid, text, session);
     }
 
     if (trimmedUpper === "NAV_VAULT") return displayVoucherStorage(psid);
@@ -576,7 +582,6 @@ async function handleIncomingMessage(psid, text) {
     if (trimmedUpper === "NAV_UNSUBSCRIBE" || trimmedUpper === "/UNSUBSCRIBE") return promptPaidUnsubscribe(psid, user);
     if (trimmedUpper === "CONFIRM_UNSUBSCRIBE") return processPaidUnsubscribe(psid, user);
 
-    if (trimmedUpper === "NAV_GIFT" || trimmedUpper.startsWith("/GIFT")) return handleGiftingCommand(psid, text, session);
     if (trimmedUpper === "BUY_VOUCHER_2") return processVoucherPurchase(psid, "1", user);
     if (trimmedUpper === "BUY_VOUCHER_5") return processVoucherPurchase(psid, "2", user);
     if (trimmedUpper === "BUY_VOUCHER_10") return processVoucherPurchase(psid, "3", user);
@@ -624,7 +629,7 @@ async function handleIncomingMessage(psid, text) {
       { title: "❓ No Code", payload: "NO_REF_CODE" },
       { title: "ℹ️ About", payload: "MENU_ABOUT" },
       { title: "⚖️ T&C", payload: "MENU_TC" },
-      { title: "💌 Invite", payload: "MENU_INVITE" }
+      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
     ]);
   }
 
@@ -719,7 +724,7 @@ function getInviteStats(user) {
   const invitesObj = user.invites || {};
   return {
     total: Object.keys(invitesObj).length,
-    hasMissionary: Object.values(invitesObj).some(email => email.toLowerCase().endsWith("@missionary.org"))
+    hasMissionary: Object.values(invitesObj).some(email => email.toLowerCase().endsWith("@missionary.org")) || Object.keys(invitesObj).length >= MISSIONARY_INVITE_REQUIREMENT
   };
 }
 
@@ -767,7 +772,6 @@ async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
   if (existingPsid) {
     const existingUser = await getUserRecord(existingPsid);
     if (existingUser && existingUser.unsubscribed) {
-      // 💡 Prevent duplicate email re-registration loop: direct them to reactivate instead
       clearSession(psid);
       setSession(psid, { state: "AWAITING_REACTIVATION_CONFIRM", psid: existingPsid });
       return sendQuickReplies(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nThis email is already linked to an existing account. Would you like to reactivate your account?\n\n🎁 Welcome Back Gift: We will refund your 5 activation points (+5.0 Pts) upon confirmation!`, [
@@ -927,10 +931,8 @@ async function displayDashboard(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
 
   let msg = `📊 MEMBER DASHBOARD\n------------------\n👤 Member: ${user.title} ${user.lastName}\n🎖️ Tier: ${vipBadge}\n🔑 Ref Code: ${user.refCode}\n👥 Invites: ${stats.total} / ${MAX_REFERRALS_PER_USER}\n⭐ Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n------------------\n📸 Product Catalog:\n${GOOGLE_PHOTOS_LINK}\n\n💬 Customer Support:\n${REAL_PERSON_CHAT_LINK}\n------------------\n`;
-  if (user.points >= GIFTING_UNLOCK_THRESHOLD || user.isTester) msg += `🔓 Point Transfers Unlocked!\n`;
-  else msg += `🔒 Transfers Locked (${(GIFTING_UNLOCK_THRESHOLD - user.points).toFixed(1)} pts needed).\n`;
   
-  sendQuickReplies(psid, msg, getDashboardQuickReplies("NAV_STATUS"));
+  sendQuickReplies(psid, msg, await getDashboardQuickReplies(psid, "NAV_STATUS"));
 }
 
 function displayInviteAndRedeemHub(psid, user) {
@@ -946,42 +948,40 @@ function displayInviteAndRedeemHub(psid, user) {
 }
 
 // ==========================================
-// 11. DAILY REDEEM ENGINE (Tier-Balanced) + Auto-Back & Invite Prompt
+// 11. DAILY REDEEM ENGINE (Once-a-day Limit & Auto Dashboard Routing)
 // ==========================================
 async function processDailyRedeem(psid, user) {
   const now = new Date();
-  if (now.getDay() === 0) return sendQuickReplies(psid, `🙏 SABBATH DAY REST\n------------------\nToday is Sunday, the Sabbath day. Return tomorrow!`, getDashboardQuickReplies("NAV_DAILY_REDEEM"));
+  if (now.getDay() === 0) return sendQuickReplies(psid, `🙏 SABBATH DAY REST\n------------------\nToday is Sunday, the Sabbath day. Return tomorrow!`, await getDashboardQuickReplies(psid, "NAV_DAILY_REDEEM"));
 
-  const stats = getInviteStats(user);
-  if (stats.total < MINING_UNLOCK_INVITES && !stats.hasMissionary && !user.isTester) {
-    return sendQuickReplies(psid, `🔒 DAILY REDEEM LOCKED\n------------------\n• Progress: ${stats.total} / ${MINING_UNLOCK_INVITES} Invites\n\nInvite 2 friends or 1 @missionary.org email to unlock!`, getDashboardQuickReplies("NAV_DAILY_REDEEM"));
+  const todayStr = now.toISOString().slice(0, 10);
+  const latestUser = await getUserRecord(psid);
+
+  // 💡 Check if already claimed today
+  if (latestUser.lastMinedTimestamp && latestUser.lastMinedTimestamp.startsWith(todayStr) && !latestUser.isTester) {
+    return sendQuickReplies(psid, `⚠️ ALREADY CLAIMED TODAY!\n------------------\nYou have already collected your daily redeem reward for today. Please come back tomorrow!\n\nReturning to Dashboard:`, await getDashboardQuickReplies(psid, "NAV_DAILY_REDEEM"));
+  }
+
+  const stats = getInviteStats(latestUser);
+  if (stats.total < MINING_UNLOCK_INVITES && !stats.hasMissionary && !latestUser.isTester) {
+    return sendQuickReplies(psid, `🔒 DAILY REDEEM LOCKED\n------------------\n• Progress: ${stats.total} / ${MINING_UNLOCK_INVITES} Invites\n\nInvite 2 friends or 5 invites to unlock!`, await getDashboardQuickReplies(psid, "NAV_DAILY_REDEEM"));
   }
 
   if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry shortly.");
   
   try {
-    const latestUser = await getUserRecord(psid);
     let isTier2 = (stats.total >= TIER_2_INVITE_THRESHOLD || stats.hasMissionary || latestUser.isTester);
     let dailyRate = isTier2 ? 1.0 : 0.5;
-
-    const lastMinedDate = latestUser.lastMinedTimestamp ? new Date(latestUser.lastMinedTimestamp) : null;
-    if (lastMinedDate && !latestUser.isTester) {
-      const diffHours = (now - lastMinedDate) / (1000 * 60 * 60);
-      if (diffHours < MINING_COOLDOWN_HOURS) {
-        return sendQuickReplies(psid, `⏳ COOLING DOWN\n------------------\n• Remaining: ${(MINING_COOLDOWN_HOURS - diffHours).toFixed(1)} hrs`, getDashboardQuickReplies("NAV_DAILY_REDEEM"));
-      }
-    }
 
     const newBalance = latestUser.points + dailyRate;
     await updateCachedUser(psid, { points: newBalance, lastMinedTimestamp: now.toISOString() });
     
     await distributeDailyYieldCommissions(psid, dailyRate);
 
-    sendQuickReplies(psid, `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points\n\nWant to add more? Invite friends using your key to earn rewards and unlock daily bonuses!\n\n🔑 Your Key: ${latestUser.refCode}\n👉 Share link: ${REFERRAL_BASE_URL}?ref=${latestUser.refCode}`, [
-      { title: "📊 Dashboard", payload: "NAV_STATUS" },
-      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" },
-      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
-    ]);
+    // 💡 Automatically show success message and route back to Dashboard with temporary hide of Daily Redeem
+    let successMsg = `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points\n\nReturning to Dashboard:`;
+    
+    sendQuickReplies(psid, successMsg, await getDashboardQuickReplies(psid, "NAV_STATUS"));
     
   } finally {
     releaseUserLock(psid);
@@ -1012,7 +1012,7 @@ async function processJoinRewardRoom(psid, user) {
   try {
     const latestUser = await getUserRecord(psid);
     if (!latestUser.isTester && latestUser.points < REWARD_ROOM_TICKET_COST) {
-      return sendQuickReplies(psid, `❌ Insufficient Points: Each ticket costs ${REWARD_ROOM_TICKET_COST} Pts.`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+      return sendQuickReplies(psid, `❌ Insufficient Points: Each ticket costs ${REWARD_ROOM_TICKET_COST} Pts.`, await getDashboardQuickReplies(psid, "NAV_REWARD_ROOM"));
     }
 
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -1021,7 +1021,7 @@ async function processJoinRewardRoom(psid, user) {
     let transactionSuccess = false;
     let newBalance = latestUser.points;
 
-    await roomRef.transaction((currentRoom) => {
+    const txResult = await roomRef.transaction((currentRoom) => {
       if (!currentRoom) {
         currentRoom = { participants: {}, ticketCount: 0, drawn: false };
       }
@@ -1038,8 +1038,8 @@ async function processJoinRewardRoom(psid, user) {
       return currentRoom;
     });
 
-    if (!transactionSuccess) {
-      return sendQuickReplies(psid, `⚠️ Unable to buy ticket: Room may be full, already drawn, or you have already purchased your maximum of ${MAX_ROOM_TICKETS_PER_USER} ticket for this room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    if (!txResult.committed || !transactionSuccess) {
+      return sendQuickReplies(psid, `⚠️ Unable to buy ticket: Room may be full, already drawn, or you have already purchased your maximum of ${MAX_ROOM_TICKETS_PER_USER} ticket for this room!`, await getDashboardQuickReplies(psid, "NAV_REWARD_ROOM"));
     }
 
     newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
@@ -1112,7 +1112,7 @@ async function executeRewardRoomDraw(todayStr, room) {
 async function promptPaidUnsubscribe(psid, user) {
   if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", [{ title: "Get Started", payload: "GET_STARTED" }]);
   if (user.points < UNSUBSCRIBE_POINT_COST && !user.isTester) {
-    return sendQuickReplies(psid, `❌ Insufficient Points: Unsubscribing costs ${UNSUBSCRIBE_POINT_COST} Pts. You currently have ${user.points.toFixed(1)} Pts.`, getDashboardQuickReplies("NAV_STATUS"));
+    return sendQuickReplies(psid, `❌ Insufficient Points: Unsubscribing costs ${UNSUBSCRIBE_POINT_COST} Pts. You currently have ${user.points.toFixed(1)} Pts.`, await getDashboardQuickReplies(psid, "NAV_STATUS"));
   }
 
   sendQuickReplies(psid, `🛑 WARNING: PAID UNSUBSCRIBE\n------------------\nBy unsubscribing, you will remove your monthly email updates you receive from us. Furthermore, all dashboard navigation will be locked and redirected to Get Started.\n\nThis action costs ${UNSUBSCRIBE_POINT_COST} Pts.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
@@ -1126,7 +1126,7 @@ async function processPaidUnsubscribe(psid, user) {
   try {
     const latestUser = await getUserRecord(psid);
     if (!latestUser.isTester && latestUser.points < UNSUBSCRIBE_POINT_COST) {
-      return sendQuickReplies(psid, `❌ Insufficient Points.`, getDashboardQuickReplies("NAV_STATUS"));
+      return sendQuickReplies(psid, `❌ Insufficient Points.`, await getDashboardQuickReplies(psid, "NAV_STATUS"));
     }
 
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - UNSUBSCRIBE_POINT_COST;
@@ -1255,8 +1255,8 @@ async function processVoucherPurchase(psid, itemKey, user) {
     const latestUser = await getUserRecord(psid);
     const monthlyCheck = await checkMonthlyVoucherLimit(psid);
     
-    if (!monthlyCheck.allowed && !latestUser.isTester) return sendQuickReplies(psid, `⚠️ Monthly Cap Reached.`, getDashboardQuickReplies("NAV_SHOP"));
-    if (latestUser.points < item.cost) return sendQuickReplies(psid, `❌ Insufficient Points: Costs ${item.cost.toFixed(1)} pts.`, getDashboardQuickReplies("NAV_SHOP"));
+    if (!monthlyCheck.allowed && !latestUser.isTester) return sendQuickReplies(psid, `⚠️ Monthly Cap Reached.`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
+    if (latestUser.points < item.cost) return sendQuickReplies(psid, `❌ Insufficient Points: Costs ${item.cost.toFixed(1)} pts.`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
 
     await updateCachedUser(psid, { points: latestUser.points - item.cost });
     await incrementMonthlyVoucherCount(psid);
@@ -1280,7 +1280,7 @@ async function processFreebieRedeem(psid, idx, user) {
   if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry.");
   try {
     if (!(await checkLifetimeFreebieLimit(psid, idx)) && !user.isTester) {
-      return sendQuickReplies(psid, `⚠️ Lifetime Freebie Limit Reached: You have already reached the maximum of ${MAX_LIFETIME_FREEBIE_CLAIMS} lifetime claims for this reward!`, getDashboardQuickReplies("NAV_SHOP"));
+      return sendQuickReplies(psid, `⚠️ Lifetime Freebie Limit Reached: You have already reached the maximum of ${MAX_LIFETIME_FREEBIE_CLAIMS} lifetime claims for this reward!`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
     }
 
     const activeVouchers = (await getUserVouchers(psid)).filter(v => v.status === "ACTIVE");
@@ -1296,7 +1296,7 @@ async function processFreebieRedeem(psid, idx, user) {
 
     const latestUser = await getUserRecord(psid);
     if (latestUser.points < reward.pointCost && !latestUser.isTester) {
-      return sendQuickReplies(psid, `❌ Insufficient Points.`, getDashboardQuickReplies("NAV_SHOP"));
+      return sendQuickReplies(psid, `❌ Insufficient Points.`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
     }
 
     await updateCachedUser(psid, { points: latestUser.points - reward.pointCost });
@@ -1426,7 +1426,11 @@ async function processCartCheckout(psid, text, user, session) {
     });
 
     clearSession(psid);
-    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, getDashboardQuickReplies("NONE"));
+    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, [
+      { title: "📊 Dashboard", payload: "NAV_STATUS" },
+      { title: "📁 Vault", payload: "NAV_VAULT" },
+      { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
+    ]);
   } finally { releaseUserLock(psid); }
 }
 
@@ -1446,7 +1450,7 @@ function formatVoucherLabel(v) {
 }
 
 // ==========================================
-// 17. PROMO CODES & GIFTING
+// 17. PROMO CODES (Gifting fully removed)
 // ==========================================
 async function processRedeemCode(psid, promoCode, user) {
   if (!tryUserLock(psid)) return;
@@ -1466,48 +1470,6 @@ async function processRedeemCode(psid, promoCode, user) {
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
     ]);
-  } finally { releaseUserLock(psid); }
-}
-
-async function handleGiftingCommand(psid, text, session) {
-  const user = await getUserRecord(psid);
-  if (user.points < GIFTING_UNLOCK_THRESHOLD && !user.isTester) return sendQuickReplies(psid, `🔒 Locked: Point transfers require ${GIFTING_UNLOCK_THRESHOLD} pts.`, getDashboardQuickReplies("NAV_STATUS"));
-  setSession(psid, { state: "AWAITING_GIFT_DETAILS" });
-  sendQuickReplies(psid, `🎁 POINT TRANSFERS\nEnter recipient Ref Code and amount:\nExample: KJL482 5`, [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
-}
-
-async function processGiftSubmission(psid, text, session) {
-  if (!tryUserLock(psid)) return;
-  try {
-    const parts = text.trim().split(/\s+/);
-    if (parts.length < 2) return sendQuickReplies(psid, "❌ Format Error. Example: KJL482 5", [{ title: "📊 Dashboard", payload: "NAV_STATUS" }]);
-
-    const targetRefCode = parts[0].toUpperCase();
-    const giftAmount = parseFloat(parts[1]);
-    const gifter = await getUserRecord(psid);
-
-    if (gifter.points < giftAmount && !gifter.isTester) {
-      clearSession(psid);
-      return sendQuickReplies(psid, "❌ Balance Error: Requested points exceed balance.", getDashboardQuickReplies("NONE"));
-    }
-
-    const recipient = await getUserRecordByRefCode(targetRefCode);
-    if (!recipient || recipient.psid === psid) return sendQuickReplies(psid, "❌ Invalid target referral code.", getDashboardQuickReplies("NONE"));
-
-    if (!tryUserLock(recipient.psid)) return sendQuickReplies(psid, "⚠️ Recipient account is currently busy processing another action. Please retry.", getDashboardQuickReplies("NONE"));
-    try {
-      await updateCachedUser(gifter.psid, { points: gifter.points - giftAmount });
-      await updateCachedUser(recipient.psid, { points: (recipient.points || 0) + giftAmount, giftedPointsReceived: (recipient.giftedPointsReceived || 0) + giftAmount });
-      
-      await processLevelCommissions(recipient.psid, giftAmount);
-    } finally { releaseUserLock(recipient.psid); }
-
-    clearSession(psid);
-    sendQuickReplies(psid, `🎁 Sent ${giftAmount} pts to ${targetRefCode}.`, [
-      { title: "📊 Dashboard", payload: "NAV_STATUS" },
-      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
-    ]);
-    sendTextMessage(recipient.psid, `🎁 Received ${giftAmount} points from a friend!`);
   } finally { releaseUserLock(psid); }
 }
 
