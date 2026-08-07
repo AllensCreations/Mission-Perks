@@ -374,8 +374,15 @@ async function handleIncomingMessage(psid, text) {
   const cleanText = text.trim();
   const trimmedUpper = cleanText.toUpperCase();
 
-  // 🛑 Master Complete Wipe Admin Command
-  if (trimmedUpper === "/ADMIN SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA") {
+  // 🛑 Master Complete Wipe Admin Command with Confirmation Password "OMSIM"
+  if (trimmedUpper.startsWith("/ADMIN SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA")) {
+    const passwordParts = text.trim().split(/\s+/);
+    const providedPassword = passwordParts[passwordParts.length - 1]; // Last token is expected password "OMSIM"
+
+    if (providedPassword !== "OMSIM") {
+      return sendTextMessage(psid, "❌ Master Wipe Denied: Incorrect confirmation password. Usage: /Admin SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA OMSIM");
+    }
+
     await firebaseDelete("users");
     await firebaseDelete("refToPsid");
     await firebaseDelete("emails");
@@ -397,8 +404,8 @@ async function handleIncomingMessage(psid, text) {
       }
       return displayDashboard(psid, userCheck);
     }
-    sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)`, [{ title: "❓ I Don't Have a Code", payload: "NO_REF_CODE" }]);
-    return;
+    // 🛑 Registration Phase: Send pure text message with NO menu options to prevent wrong touches!
+    return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
   }
 
   if (trimmedUpper.startsWith("/ADMIN")) {
@@ -465,7 +472,7 @@ async function handleIncomingMessage(psid, text) {
     if (trimmedUpper.startsWith("FREEBIE_REDEEM_")) return processFreebieRedeem(psid, parseInt(trimmedUpper.replace("FREEBIE_REDEEM_", "").trim(), 10), user);
     if (trimmedUpper.startsWith("CONFIRM_APPLY_")) return initiateVoucherApplyFlow(psid, trimmedUpper.replace("CONFIRM_APPLY_", "").trim(), user);
     if (trimmedUpper.startsWith("APPLY_PROMPT_")) return promptVoucherWarning(psid, trimmedUpper.replace("APPLY_PROMPT_", "").trim());
-    if (trimmedUpper.startsWith("/REDEEM") || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
+    if (trimmedUpper.startsWith("/REDEEM" ) || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
     if (trimmedUpper.startsWith("/APPLY")) return promptVoucherWarning(psid, text.replace(/\/apply/i, "").trim().toUpperCase());
 
     return displayDashboard(psid, user);
@@ -477,10 +484,8 @@ async function handleIncomingMessage(psid, text) {
   if (!session) {
     if (trimmedUpper === "NO_REF_CODE") {
       setSession(psid, { state: "AWAITING_CONSENT" });
-      return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
-        { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
-        { title: "❌ Decline", payload: "CANCEL" }
-      ]);
+      // 🛑 Registration Phase Consent: Use plain text instruction without interactive quick replies to avoid accidental touches
+      return sendTextMessage(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nType "AGREE" to accept these terms and continue (or type CANCEL to abort):`);
     }
 
     const inputCode = (trimmedUpper !== "GET_STARTED" && trimmedUpper !== "") ? trimmedUpper : currentRef;
@@ -494,15 +499,12 @@ async function handleIncomingMessage(psid, text) {
       if (matchingUser || inputCode === MASTER_REFERRAL_CODE) {
         setDirectRef(psid, inputCode);
         setSession(psid, { state: "AWAITING_CONSENT" });
-        return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
-          { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
-          { title: "❌ Decline", payload: "CANCEL" }
-        ]);
+        return sendTextMessage(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nType "AGREE" to accept these terms and continue (or type CANCEL to abort):`);
       }
     }
 
-    sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)`, [{ title: "❓ I Don't Have a Code", payload: "NO_REF_CODE" }]);
-    return;
+    // 🛑 Registration Phase Initial Prompt: Plain text only
+    return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
   }
 
   if (trimmedUpper === "CANCEL" || trimmedUpper === "RESTART") {
@@ -533,7 +535,10 @@ async function handleIncomingMessage(psid, text) {
   if (session.state === "AWAITING_EMAIL") return handleEmailAndSendOTP(psid, text.trim().toLowerCase(), session, false);
   if (session.state === "AWAITING_OTP") return processOTPVerification(psid, text.trim(), session);
   if (session.state === "AWAITING_TITLE") {
-    if (trimmedUpper !== "ELDER" && trimmedUpper !== "SISTER" && trimmedUpper !== "BROTHER") return sendQuickReplies(psid, "❌ Tap Elder, Sister, or Brother below:", [{ title: "Elder", payload: "ELDER" }, { title: "Sister", payload: "SISTER" }, { title: "Brother", payload: "BROTHER" }]);
+    if (trimmedUpper !== "ELDER" && trimmedUpper !== "SISTER" && trimmedUpper !== "BROTHER") {
+      // 🛑 Registration Phase Title Selection: Text instructions instead of buttons to prevent accidental clicks
+      return sendTextMessage(psid, "❌ Please reply by typing 'Elder', 'Sister', or 'Brother':");
+    }
     session.title = trimmedUpper;
     session.state = "AWAITING_LAST_NAME";
     setSession(psid, session);
@@ -684,7 +689,8 @@ function processOTPVerification(psid, userOtpInput, session) {
   session.state = "AWAITING_TITLE";
   delete session.otp;
   setSession(psid, session);
-  sendQuickReplies(psid, `✅ EMAIL VERIFIED!\n------------------\n👉 STEP 2 of 4: Select Title:`, [{ title: "Elder", payload: "ELDER" }, { title: "Sister", payload: "SISTER" }, { title: "Brother", payload: "BROTHER" }]);
+  // 🛑 Registration Phase Title Choice: Plain text instruction to prevent accidental menu button taps
+  return sendTextMessage(psid, `✅ EMAIL VERIFIED!\n------------------\n👉 STEP 2 of 4: Please type your Title ('Elder', 'Sister', or 'Brother'):`);
 }
 
 async function finalizeRegistration(psid, session, appliedRefCode) {
