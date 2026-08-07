@@ -387,12 +387,13 @@ async function setupMessengerProfile() {
   };
 
   try {
-    await fetch(`https://graph.facebook.com/v20.0/me/messenger_profile?access_token=${token}`, {
+    const response = await fetch(`https://graph.facebook.com/v20.0/me/messenger_profile?access_token=${token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(profilePayload)
     });
-    console.log("✅ Messenger Profile (Get Started & Persistent Menu) configured successfully.");
+    const result = await response.json();
+    console.log("✅ Messenger Profile Setup Result: ", result);
   } catch (e) {
     console.error("Messenger Profile Setup Error: ", e);
   }
@@ -446,7 +447,7 @@ async function handleIncomingMessage(psid, text) {
 
   // Persistent Menu Option Handlers
   if (trimmedUpper === "MENU_ABOUT") {
-    return sendTextMessage(psid, "ℹ️ ABOUT THE APP & CREATOR\n------------------\nHi! I'm Mark Allen B. Salviejo, BSEE major. Thank you for using my Messenger Bot! This bot is just one of my 3 AM thoughts, and I can't even believe it works.\n\nIf you want to automate your Messenger bot, please contact me at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!");
+    return sendTextMessage(psid, "ℹ️ ABOUT MISSIONPERKS & CREATORS\n------------------\n📌 **About the App:**\nMissionPerks is an extension of our shop 'Timeless Creations', where we sell freebies and vouchers in order for you, as customers, to enjoy the freebies we can give!\n\n📌 **Why We Created It:**\nOur business is owned by my friend Sirgin Jacob Peralta, and we built this platform to help widen our reach and give back awesome perks to our community.\n\n👨‍💻 **About the Creator:**\nHi! I'm Mark Allen B. Salviejo, BSEE major. I created this Messenger bot! This bot is just one of my 3 AM thoughts, and I can't even believe it works.\n\nIf you want to automate your Messenger bot, please contact me at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!");
   }
   if (trimmedUpper === "MENU_TC") {
     return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C)\n------------------\nIn compliance with the Data Privacy Act, by participating in MissionPerks you agree to receive monthly mail updates until your service or membership ends, unless you opt to use the paid unsubscription feature.");
@@ -480,8 +481,14 @@ async function handleIncomingMessage(psid, text) {
       }
       return displayDashboard(psid, userCheck);
     }
-    // Get Started Quick Greeting Message
-    return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
+    // 🛑 Get Started Quick Greeting Message with returned Quick Replies (Main Navigations & Options)
+    return sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, tap below or reply with: NO_REF_CODE)`, [
+      { title: "🚀 Get Started", payload: "GET_STARTED" },
+      { title: "❓ No Code", payload: "NO_REF_CODE" },
+      { title: "ℹ️ About", payload: "MENU_ABOUT" },
+      { title: "⚖️ T&C", payload: "MENU_TC" },
+      { title: "💌 Invite", payload: "MENU_INVITE" }
+    ]);
   }
 
   if (trimmedUpper.startsWith("/ADMIN")) {
@@ -560,7 +567,10 @@ async function handleIncomingMessage(psid, text) {
   if (!session) {
     if (trimmedUpper === "NO_REF_CODE") {
       setSession(psid, { state: "AWAITING_CONSENT" });
-      return sendTextMessage(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nType "AGREE" to accept these terms and continue (or type CANCEL to abort):`);
+      return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+        { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+        { title: "❌ Decline", payload: "CANCEL" }
+      ]);
     }
 
     const inputCode = (trimmedUpper !== "GET_STARTED" && trimmedUpper !== "") ? trimmedUpper : currentRef;
@@ -574,11 +584,20 @@ async function handleIncomingMessage(psid, text) {
       if (matchingUser || inputCode === MASTER_REFERRAL_CODE) {
         setDirectRef(psid, inputCode);
         setSession(psid, { state: "AWAITING_CONSENT" });
-        return sendTextMessage(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nType "AGREE" to accept these terms and continue (or type CANCEL to abort):`);
+        return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+          { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+          { title: "❌ Decline", payload: "CANCEL" }
+        ]);
       }
     }
 
-    return sendTextMessage(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, reply with: NO_REF_CODE)`);
+    return sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, tap below or reply with: NO_REF_CODE)`, [
+      { title: "🚀 Get Started", payload: "GET_STARTED" },
+      { title: "❓ No Code", payload: "NO_REF_CODE" },
+      { title: "ℹ️ About", payload: "MENU_ABOUT" },
+      { title: "⚖️ T&C", payload: "MENU_TC" },
+      { title: "💌 Invite", payload: "MENU_INVITE" }
+    ]);
   }
 
   if (trimmedUpper === "CANCEL" || trimmedUpper === "RESTART") {
@@ -610,7 +629,11 @@ async function handleIncomingMessage(psid, text) {
   if (session.state === "AWAITING_OTP") return processOTPVerification(psid, text.trim(), session);
   if (session.state === "AWAITING_TITLE") {
     if (trimmedUpper !== "ELDER" && trimmedUpper !== "SISTER" && trimmedUpper !== "BROTHER") {
-      return sendTextMessage(psid, "❌ Please reply by typing 'Elder', 'Sister', or 'Brother':");
+      return sendQuickReplies(psid, "❌ Tap Elder, Sister, or Brother below:", [
+        { title: "Elder", payload: "ELDER" },
+        { title: "Sister", payload: "SISTER" },
+        { title: "Brother", payload: "BROTHER" }
+      ]);
     }
     session.title = trimmedUpper;
     session.state = "AWAITING_LAST_NAME";
@@ -762,7 +785,11 @@ function processOTPVerification(psid, userOtpInput, session) {
   session.state = "AWAITING_TITLE";
   delete session.otp;
   setSession(psid, session);
-  return sendTextMessage(psid, `✅ EMAIL VERIFIED!\n------------------\n👉 STEP 2 of 4: Please type your Title ('Elder', 'Sister', or 'Brother'):`);
+  return sendQuickReplies(psid, `✅ EMAIL VERIFIED!\n------------------\n👉 STEP 2 of 4: Select Title:`, [
+    { title: "Elder", payload: "ELDER" },
+    { title: "Sister", payload: "SISTER" },
+    { title: "Brother", payload: "BROTHER" }
+  ]);
 }
 
 async function finalizeRegistration(psid, session, appliedRefCode) {
@@ -1249,7 +1276,7 @@ async function processFreebieRedeem(psid, idx, user) {
     }
     catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write comma or space separated numbers (e.g. 5,5,1 to buy two of #5 and one of #1)!\n\n⬅️ Or type "Back" to return to the dashboard.`;
 
-    sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "BACK_TO_DASHBOARD" }]);
+    sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "NAV_BACK" }]);
   } finally {
     releaseUserLock(psid);
   }
@@ -1291,14 +1318,14 @@ async function initiateVoucherApplyFlow(psid, code, user) {
   }
   catalogMenu += `\n\n⬅️ Or type "Back" to return to the dashboard.`;
 
-  sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "BACK_TO_DASHBOARD" }]);
+  sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "NAV_BACK" }]);
 }
 
 async function processCartCheckout(psid, text, user, session) {
   if (!tryUserLock(psid)) return;
   try {
     const cleanInput = text.trim();
-    if (cleanInput.toUpperCase() === "BACK" || cleanInput.toUpperCase() === "BACK_TO_DASHBOARD") {
+    if (cleanInput.toUpperCase() === "BACK" || cleanInput.toUpperCase() === "NAV_BACK" || cleanInput.toUpperCase() === "BACK_TO_DASHBOARD") {
       clearSession(psid);
       return displayDashboard(psid, user);
     }
