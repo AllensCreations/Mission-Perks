@@ -20,7 +20,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // 1. CONFIGURATION & SYSTEM CONSTANTS
 // ==========================================
 const VIP_POINT_THRESHOLD = 20.0;          
-const MONTHLY_VOUCHER_LIMIT = 10;          // 🔄 Updated monthly limit to 10
+const MONTHLY_VOUCHER_LIMIT = 10;          
 const MAX_LIFETIME_FREEBIE_CLAIMS = 2;     
 
 const MAX_DAILY_MESSAGES = 15;             
@@ -31,7 +31,7 @@ const MINING_UNLOCK_INVITES = 2;
 const MINING_COOLDOWN_HOURS = 24;         
 const MAX_REFERRALS_PER_USER = 10;        
 const TIER_2_INVITE_THRESHOLD = 10;       
-const MISSIONARY_INVITE_REQUIREMENT = 5;  // 🔄 Updated missionary signup requirement to 5 invites
+const MISSIONARY_INVITE_REQUIREMENT = 5;  
 const MAX_ACTIVE_VAULT_VOUCHERS = 10;     
 
 const UNSUBSCRIBE_POINT_COST = 5.0;        
@@ -371,7 +371,7 @@ async function setupMessengerProfile() {
           },
           {
             "type": "postback",
-            "title": "⚖️ T&C",
+            "title": "⚖️ T&C & Privacy",
             "payload": "MENU_TC"
           },
           {
@@ -403,7 +403,7 @@ async function setupMessengerProfile() {
 }
 
 // ==========================================
-// 6. DYNAMIC QUICK REPLY BUILDER (Main Navigations - Invite & Redeem replaced with Dashboard/Shop)
+// 6. DYNAMIC QUICK REPLY BUILDER (Main Navigations)
 // ==========================================
 async function getDashboardQuickReplies(psid, currentContext) {
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -420,7 +420,6 @@ async function getDashboardQuickReplies(psid, currentContext) {
     { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" }
   ];
 
-  // 💡 Temporarily hide Daily Redeem quick reply if already claimed today
   if (!alreadyClaimedToday) {
     allButtons.push({ title: "🎁 Daily Redeem", payload: "NAV_DAILY_REDEEM" });
   }
@@ -469,7 +468,7 @@ async function handleIncomingMessage(psid, text) {
     return sendTextMessage(psid, "ℹ️ ABOUT MISSIONPERKS & CREATORS\n------------------\n📌 **About the App:**\nMissionPerks is an extension of our shop 'Timeless Creations', where we sell freebies and vouchers in order for you, as customers, to enjoy the freebies we can give!\n\n📌 **Why We Created It:**\nOur business is owned by my friend Sirgin Jacob Peralta, and we built this platform to help widen our reach and give back awesome perks to our community.\n\n👨‍💻 **About the Creator:**\nHi! I'm Mark Allen B. Salviejo, BSEE major. I created this Messenger bot! This bot is just one of my 3 AM thoughts, and I can't even believe it works.\n\nIf you want to automate your Messenger bot, please contact me at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!");
   }
   if (trimmedUpper === "MENU_TC") {
-    return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C)\n------------------\nIn compliance with the Data Privacy Act, by participating in MissionPerks you agree to receive monthly mail updates until your service or membership ends, unless you opt to use the paid unsubscription feature.");
+    return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nThank you for trusting Timeless Creations!");
   }
   if (trimmedUpper === "MENU_UNSUBSCRIBE") {
     const userCheck = await getUserRecord(psid);
@@ -600,7 +599,7 @@ async function handleIncomingMessage(psid, text) {
   if (!session) {
     if (trimmedUpper === "NO_REF_CODE") {
       setSession(psid, { state: "AWAITING_CONSENT" });
-      return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+      return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
         { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
         { title: "❌ Decline", payload: "CANCEL" }
       ]);
@@ -617,7 +616,7 @@ async function handleIncomingMessage(psid, text) {
       if (matchingUser || inputCode === MASTER_REFERRAL_CODE) {
         setDirectRef(psid, inputCode);
         setSession(psid, { state: "AWAITING_CONSENT" });
-        return sendQuickReplies(psid, `⚖️ DATA PRIVACY & TERMS CONSENT\n------------------\nIn compliance with the Data Privacy Act, by entering your email you agree to receive a monthly mail update until your service or membership ends.\n\nDo you accept these terms to continue?`, [
+        return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
           { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
           { title: "❌ Decline", payload: "CANCEL" }
         ]);
@@ -957,7 +956,6 @@ async function processDailyRedeem(psid, user) {
   const todayStr = now.toISOString().slice(0, 10);
   const latestUser = await getUserRecord(psid);
 
-  // 💡 Check if already claimed today
   if (latestUser.lastMinedTimestamp && latestUser.lastMinedTimestamp.startsWith(todayStr) && !latestUser.isTester) {
     return sendQuickReplies(psid, `⚠️ ALREADY CLAIMED TODAY!\n------------------\nYou have already collected your daily redeem reward for today. Please come back tomorrow!\n\nReturning to Dashboard:`, await getDashboardQuickReplies(psid, "NAV_DAILY_REDEEM"));
   }
@@ -978,7 +976,6 @@ async function processDailyRedeem(psid, user) {
     
     await distributeDailyYieldCommissions(psid, dailyRate);
 
-    // 💡 Automatically show success message and route back to Dashboard with temporary hide of Daily Redeem
     let successMsg = `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points\n\nReturning to Dashboard:`;
     
     sendQuickReplies(psid, successMsg, await getDashboardQuickReplies(psid, "NAV_STATUS"));
