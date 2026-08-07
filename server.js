@@ -10,7 +10,6 @@ require('dotenv').config();
 const app = express();
 app.use(bodyParser.json());
 
-// In-memory cache instance mimicking Google Apps Script CacheService (TTL in seconds)
 const cache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 
 // ==========================================
@@ -20,10 +19,10 @@ const MAX_PASSIVE_REFERRAL_POINTS = 100.0;
 const GIFTING_UNLOCK_THRESHOLD = 20.0;     
 const VIP_POINT_THRESHOLD = 20.0;          
 const MONTHLY_VOUCHER_LIMIT = 15;          
-const MAX_MONTHLY_FREEBIE_CLAIMS = 2;      // 🎁 Capped at 2 claims per month per user
+const MAX_LIFETIME_FREEBIE_CLAIMS = 2;     
 
 const MAX_DAILY_MESSAGES = 15;             
-const MAX_DAILY_GLOBAL_SIGNUPS = 100;      // 🔄 Updated to 100 max daily registrations
+const MAX_DAILY_GLOBAL_SIGNUPS = 100;      
 const MAX_DAILY_OTP_PER_USER = 1;          
 
 const MINING_UNLOCK_INVITES = 2;          
@@ -31,6 +30,13 @@ const MINING_COOLDOWN_HOURS = 24;
 const MAX_REFERRALS_PER_USER = 10;        
 const TIER_2_INVITE_THRESHOLD = 10;       
 const MAX_ACTIVE_VAULT_VOUCHERS = 10;     
+
+const UNSUBSCRIBE_POINT_COST = 5.0;        
+const REWARD_ROOM_TICKET_COST = 10.0;    
+const MAX_ROOM_TICKETS_PER_USER = 3;     
+const REWARD_ROOM_CAPACITY = 100;          
+const REWARD_ROOM_WINNERS_COUNT = 5;       
+const REWARD_ROOM_PRIZE_POOL = 500.0;      
 
 const MASTER_REFERRAL_CODE = "TCM999"; 
 const ADMIN_UNLOCK_CODE = "SIRGINPERALTA";
@@ -41,11 +47,12 @@ const BURST_WINDOW_SECONDS = 10;
 
 const DEV_ADVERTISEMENT = "\n\n💡 If you want to automate your messenger like this, please contact salviejomark2019@gmail.com";
 
-// 🔗 Links & Google Drive Direct Image Links for Messenger Image Bubbles
 const REFERRAL_PAGE_ID = "61592870668902";
 const REFERRAL_BASE_URL = `https://m.me/${REFERRAL_PAGE_ID}`;
 const GOOGLE_PHOTOS_LINK = "https://photos.app.goo.gl/6h7UPfkHU5TuvzXU7"; 
 const REAL_PERSON_CHAT_LINK = "https://m.me/timeless.creations.06"; 
+
+const GOOGLE_SHEET_WEB_APP_URL = process.env.GOOGLE_SHEET_WEB_APP_URL || "";
 
 const CART_IMAGE_LINKS = [
   "https://drive.google.com/uc?export=view&id=YOUR_IMAGE_ID_1",
@@ -70,7 +77,6 @@ const SHOP_PRODUCTS = {
   "3": { name: "10% Premium Voucher", cost: 10.0, discount: 10, type: "WHOLESALE" }
 };
 
-// 🎁 Balanced Freebie Rewards (2.5x to 3x value ratio against required items)
 const FREEBIE_REWARDS = [
   { pointCost: 10.0, freebieKey: "4", requiredKey: "1" }, 
   { pointCost: 15.0, freebieKey: "1", requiredKey: "2" }, 
@@ -92,7 +98,6 @@ initializeApp({
 
 const db = getDatabase();
 
-// HTTP-based email delivery via Brevo API (bypasses Render outbound SMTP port blocks)
 async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
   try {
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -120,7 +125,19 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
   }
 }
 
-// Firebase REST-equivalent helper wrappers using Node.js SDK
+async function syncToGoogleSheets(payloadData) {
+  if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("YOUR_GOOGLE_APPS_SCRIPT")) return;
+  try {
+    await fetch(GOOGLE_SHEET_WEB_APP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadData)
+    });
+  } catch (err) {
+    console.error("Google Sheets Sync Error: ", err.message);
+  }
+}
+
 async function firebaseGet(path) {
   try {
     const snapshot = await db.ref(path).get();
@@ -176,7 +193,6 @@ app.get('/webhook', (req, res) => {
   return res.status(403).send('Verification failed');
 });
 
-// Dedicated Webhook endpoint for handling newsletter Unsubscriptions
 app.get('/unsubscribe', async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).send("<h3>❌ Invalid unsubscribe link.</h3>");
@@ -187,7 +203,16 @@ app.get('/unsubscribe', async (req, res) => {
   if (psid) {
     await firebasePatch(`users/${psid}`, { unsubscribed: true });
     cache.del("USER_" + psid);
-    return res.status(200).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Successfully Unsubscribed</h2><p>You will no longer receive monthly updates from MissionPerks.</p></body></html>");
+
+    const user = await getUserRecord(psid);
+    if (user) {
+      await syncToGoogleSheets({
+        action: "REMOVE_MEMBER",
+        email: user.email
+      });
+    }
+
+    return res.status(200).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Successfully Unsubscribed</h2><p>Your subscription has been ended and your records removed from our active sheet database.</p></body></html>");
   }
   return res.status(404).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>❌ Email not found in our system records.</h2></body></html>");
 });
@@ -310,16 +335,14 @@ async function incrementMonthlyVoucherCount(psid) {
   await firebasePut(`users/${psid}/monthlyVouchers/${currentMonth}`, count + 1);
 }
 
-async function checkMonthlyFreebieLimit(psid, idx) {
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const count = await firebaseGet(`users/${psid}/monthlyFreebies/${currentMonth}/${idx}`) || 0;
-  return count < MAX_MONTHLY_FREEBIE_CLAIMS;
+async function checkLifetimeFreebieLimit(psid, idx) {
+  const count = await firebaseGet(`users/${psid}/lifetimeFreebies/${idx}`) || 0;
+  return count < MAX_LIFETIME_FREEBIE_CLAIMS;
 }
 
-async function incrementMonthlyFreebieCount(psid, idx) {
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const count = await firebaseGet(`users/${psid}/monthlyFreebies/${currentMonth}/${idx}`) || 0;
-  await firebasePut(`users/${psid}/monthlyFreebies/${currentMonth}/${idx}`, count + 1);
+async function incrementLifetimeFreebieCount(psid, idx) {
+  const count = await firebaseGet(`users/${psid}/lifetimeFreebies/${idx}`) || 0;
+  await firebasePut(`users/${psid}/lifetimeFreebies/${idx}`, count + 1);
 }
 
 function getSession(psid) { 
@@ -339,8 +362,8 @@ function getDashboardQuickReplies(currentContext) {
     { title: "📊 Dashboard", payload: "NAV_STATUS" },
     { title: "📁 Vault", payload: "NAV_VAULT" },
     { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" },
-    { title: "💌 Invite & Redeem", payload: "NAV_INVITE_REDEEM" },
-    { title: "🎁 Gift Points", payload: "NAV_GIFT" }
+    { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" },
+    { title: "💌 Invite & Redeem", payload: "NAV_INVITE_REDEEM" }
   ];
   return allButtons.filter(btn => btn.payload !== currentContext);
 }
@@ -358,8 +381,14 @@ async function handleIncomingMessage(psid, text) {
   const cleanText = text.trim();
   const trimmedUpper = cleanText.toUpperCase();
 
-  if (trimmedUpper === "GET_STARTED") {
-    sendTextMessage(psid, "👋 Welcome to MissionPerks by Timeless Creations!");
+  if (trimmedUpper === "GET_STARTED" || trimmedUpper === "/START") {
+    const userCheck = await getUserRecord(psid);
+    if (userCheck) {
+      clearSession(psid);
+      return displayDashboard(psid, userCheck);
+    }
+    sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)`, [{ title: "❓ I Don't Have a Code", payload: "NO_REF_CODE" }]);
+    return;
   }
 
   if (trimmedUpper.startsWith("/ADMIN")) {
@@ -372,7 +401,6 @@ async function handleIncomingMessage(psid, text) {
     return revokeAndResetAccount(psid);
   }
 
-  // 🛠️ Admin command to reset OTP daily limit for testing purposes: /ADMIN RESETOTP email@gmail.com
   if (trimmedUpper.startsWith("/ADMIN RESETOTP")) {
     const targetEmail = trimmedUpper.replace("/ADMIN RESETOTP", "").trim().toLowerCase();
     if (targetEmail) {
@@ -407,6 +435,11 @@ async function handleIncomingMessage(psid, text) {
     if (trimmedUpper === "NAV_SHOP") return displayShopAndFreebies(psid, user);
     if (trimmedUpper === "NAV_INVITE_REDEEM") return displayInviteAndRedeemHub(psid, user);
     if (trimmedUpper === "NAV_DAILY_REDEEM" || trimmedUpper === "NAV_MINE" || trimmedUpper === "/MINE") return processDailyRedeem(psid, user);
+    if (trimmedUpper === "NAV_REWARD_ROOM" || trimmedUpper === "/REWARDROOM") return displayRewardRoom(psid, user);
+    if (trimmedUpper === "JOIN_REWARD_ROOM" || trimmedUpper === "/JOINROOM") return processJoinRewardRoom(psid, user);
+    if (trimmedUpper === "NAV_UNSUBSCRIBE" || trimmedUpper === "/UNSUBSCRIBE") return promptPaidUnsubscribe(psid, user);
+    if (trimmedUpper === "CONFIRM_UNSUBSCRIBE") return processPaidUnsubscribe(psid, user);
+
     if (trimmedUpper === "NAV_GIFT" || trimmedUpper.startsWith("/GIFT")) return handleGiftingCommand(psid, text, session);
     if (trimmedUpper === "BUY_VOUCHER_2") return processVoucherPurchase(psid, "1", user);
     if (trimmedUpper === "BUY_VOUCHER_5") return processVoucherPurchase(psid, "2", user);
@@ -557,7 +590,7 @@ async function generateCompactReferralCode() {
   return code;
 }
 
-async function generateBOMVoucherCode(psid) {
+function generateBOMVoucherCode(psid) {
   const heroes = ["NEPHI", "MORONI", "ALMA", "HELAMAN", "AMMON", "ETHER", "LEHI", "MORMON"];
   const selectedHero = heroes[Math.floor(Math.random() * heroes.length)];
   const rawPayload = `${psid || 'GUEST'}_${Date.now()}_${Math.random()}`;
@@ -646,6 +679,14 @@ async function finalizeRegistration(psid, session, appliedRefCode) {
   await firebasePut(`refToPsid/${userRefCode}`, psid);
   await firebasePut(`emails/${session.email.replace(/\./g, ',')}`, psid);
 
+  await syncToGoogleSheets({
+    action: "ADD_MEMBER",
+    email: session.email,
+    title: session.title,
+    lastName: session.lastName,
+    batch: session.batch
+  });
+
   if (finalRef && finalRef !== MASTER_REFERRAL_CODE) await distributeUplineCommissions(finalRef, psid, session.email, initialBonus, session.title + " " + session.lastName);
 
   const expiryDate = new Date();
@@ -675,6 +716,14 @@ async function grantTesterAccess(psid) {
       lastMinedTimestamp: "", isTester: true, unsubscribed: false, registeredAt: new Date().toISOString()
     });
     await firebasePut(`refToPsid/${adminRefCode}`, psid);
+    
+    await syncToGoogleSheets({
+      action: "ADD_MEMBER",
+      email: `tester_${psid}@internal.dev`,
+      title: "ADMIN",
+      lastName: "TESTER",
+      batch: "N/A"
+    });
   } else {
     await updateCachedUser(psid, { points: ADMIN_STARTING_POINTS, isTester: true, title: "ADMIN", lastName: "TESTER" });
   }
@@ -687,6 +736,13 @@ async function grantTesterAccess(psid) {
 async function revokeAndResetAccount(psid) {
   const user = await getUserRecord(psid);
   if (!user) return sendTextMessage(psid, "❌ No profile found.");
+
+  if (user.email) {
+    await syncToGoogleSheets({
+      action: "REMOVE_MEMBER",
+      email: user.email
+    });
+  }
 
   if (user.refCode) await firebaseDelete(`refToPsid/${user.refCode}`);
   if (user.email) await firebaseDelete(`emails/${user.email.replace(/\./g, ',')}`);
@@ -771,7 +827,146 @@ async function processDailyRedeem(psid, user) {
 }
 
 // ==========================================
-// 11. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
+// 11. REWARD ROOM FEATURE
+// ==========================================
+async function displayRewardRoom(psid, user) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const roomData = await firebaseGet(`reward_room/${todayStr}`) || { participants: {}, ticketCount: 0 };
+  const userTickets = roomData.participants[psid] || 0;
+  const totalTickets = roomData.ticketCount || 0;
+
+  let msg = `🎰 REWARD ROOM LOBBY\n------------------\n🎯 Room Capacity: ${totalTickets} / ${REWARD_ROOM_CAPACITY} Tickets\n🎟️ Your Tickets: ${userTickets} / ${MAX_ROOM_TICKETS_PER_USER}\n💰 Ticket Cost: ${REWARD_ROOM_TICKET_COST} Pts\n🏆 Prize Pool: ${REWARD_ROOM_PRIZE_POOL} Pts (${REWARD_ROOM_WINNERS_COUNT} Winners x 100 Pts each!)\n\n⏰ DRAW SCHEDULE:\nDraws are automatically executed when full or on the next day at 8:00 AM & 1:00 PM sharp!\n------------------\nTap below to buy tickets:`;
+
+  sendQuickReplies(psid, msg, [
+    { title: "🎟️ Buy Ticket (10p)", payload: "JOIN_REWARD_ROOM" },
+    { title: "📊 Dashboard", payload: "NAV_STATUS" },
+    { title: "📁 Vault", payload: "NAV_VAULT" }
+  ]);
+}
+
+async function processJoinRewardRoom(psid, user) {
+  if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry.");
+  try {
+    const latestUser = await getUserRecord(psid);
+    if (!latestUser.isTester && latestUser.points < REWARD_ROOM_TICKET_COST) {
+      return sendQuickReplies(psid, `❌ Insufficient Points: Each ticket costs ${REWARD_ROOM_TICKET_COST} Pts.`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const roomRef = db.ref(`reward_room/${todayStr}`);
+    const snapshot = await roomRef.get();
+    let room = snapshot.exists() ? snapshot.val() : { participants: {}, ticketCount: 0, drawn: false };
+
+    if (room.drawn) return sendQuickReplies(psid, `⚠️ Today's room has already concluded. A new room will open soon!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    if (room.ticketCount >= REWARD_ROOM_CAPACITY) return sendQuickReplies(psid, `⚠️ Room is full (${REWARD_ROOM_CAPACITY}/${REWARD_ROOM_CAPACITY} tickets)! Draw will happen at the next scheduled time (8am / 1pm).`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+
+    const currentTickets = room.participants[psid] || 0;
+    if (currentTickets >= MAX_ROOM_TICKETS_PER_USER) {
+      return sendQuickReplies(psid, `⚠️ Ticket Limit Reached: You can only buy a maximum of ${MAX_ROOM_TICKETS_PER_USER} tickets per room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+    }
+
+    const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
+    await updateCachedUser(psid, { points: newBalance });
+
+    room.participants[psid] = currentTickets + 1;
+    room.ticketCount = (room.ticketCount || 0) + 1;
+    await roomRef.set(room);
+
+    if (room.ticketCount >= REWARD_ROOM_CAPACITY) {
+      await executeRewardRoomDraw(todayStr, room);
+    }
+
+    const updatedUserTickets = room.participants[psid];
+    sendQuickReplies(psid, `🎉 TICKET PURCHASED!\n------------------\n• Tickets Owned: ${updatedUserTickets} / ${MAX_ROOM_TICKETS_PER_USER}\n• Total Room Tickets: ${room.ticketCount} / ${REWARD_ROOM_CAPACITY}\n• Remaining Balance: ${newBalance.toFixed(1)} Pts`, [
+      { title: "🎟️ Buy Another", payload: "JOIN_REWARD_ROOM" },
+      { title: "📊 Dashboard", payload: "NAV_STATUS" }
+    ]);
+  } finally {
+    releaseUserLock(psid);
+  }
+}
+
+async function executeRewardRoomDraw(todayStr, room) {
+  if (room.drawn) return;
+  room.drawn = true;
+  await db.ref(`reward_room/${todayStr}`).set(room);
+
+  let ticketPool = [];
+  for (const [psid, count] of Object.entries(room.participants || {})) {
+    for (let i = 0; i < count; i++) {
+      ticketPool.push(psid);
+    }
+  }
+
+  for (let i = ticketPool.length - 1; i > 0; i--) {
+    let randBytes = crypto.randomBytes(4);
+    let randVal = randBytes.readUInt32BE(0) / 0x100000000;
+    let j = Math.floor(randVal * (i + 1));
+    [ticketPool[i], ticketPool[j]] = [ticketPool[j], ticketPool[i]];
+  }
+
+  let winners = [];
+  let seen = new Set();
+  for (const psid of ticketPool) {
+    if (!seen.has(psid)) {
+      seen.add(psid);
+      winners.push(psid);
+      if (winners.length >= REWARD_ROOM_WINNERS_COUNT) break;
+    }
+  }
+
+  const individualPrize = REWARD_ROOM_PRIZE_POOL / REWARD_ROOM_WINNERS_COUNT;
+
+  for (const winnerPsid of winners) {
+    const winnerUser = await getUserRecord(winnerPsid);
+    if (winnerUser) {
+      const newWinBalance = winnerUser.points + individualPrize;
+      await updateCachedUser(winnerPsid, { points: newWinBalance });
+      sendTextMessage(winnerPsid, `🏆 REWARD ROOM JACKPOT WINNER! 🎉\n------------------\nCongratulations! You won the Reward Room draw!\n• Prize: +${individualPrize.toFixed(1)} Pts\n• New Balance: ${newWinBalance.toFixed(1)} Pts`);
+    }
+  }
+}
+
+// ==========================================
+// 12. PAID UNSUBSCRIBE FEATURE
+// ==========================================
+async function promptPaidUnsubscribe(psid, user) {
+  if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", getDashboardQuickReplies("NAV_STATUS"));
+  if (user.points < UNSUBSCRIBE_POINT_COST && !user.isTester) {
+    return sendQuickReplies(psid, `❌ Insufficient Points: Unsubscribing costs ${UNSUBSCRIBE_POINT_COST} Pts. You currently have ${user.points.toFixed(1)} Pts.`, getDashboardQuickReplies("NAV_STATUS"));
+  }
+
+  sendQuickReplies(psid, `🛑 PAID UNSUBSCRIBE SERVICE\n------------------\nEnding your subscription and removing your records from our database costs ${UNSUBSCRIBE_POINT_COST} Pts.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
+    { title: "🛑 Confirm Unsubscribe", payload: "CONFIRM_UNSUBSCRIBE" },
+    { title: "📊 Dashboard", payload: "NAV_STATUS" }
+  ]);
+}
+
+async function processPaidUnsubscribe(psid, user) {
+  if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry.");
+  try {
+    const latestUser = await getUserRecord(psid);
+    if (!latestUser.isTester && latestUser.points < UNSUBSCRIBE_POINT_COST) {
+      return sendQuickReplies(psid, `❌ Insufficient Points.`, getDashboardQuickReplies("NAV_STATUS"));
+    }
+
+    const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - UNSUBSCRIBE_POINT_COST;
+    await updateCachedUser(psid, { points: newBalance, unsubscribed: true });
+
+    await syncToGoogleSheets({
+      action: "REMOVE_MEMBER",
+      email: latestUser.email
+    });
+
+    clearSession(psid);
+    sendTextMessage(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYour subscription has ended and your data has been removed from our active Google Sheet records.`);
+  } finally {
+    releaseUserLock(psid);
+  }
+}
+
+// ==========================================
+// 13. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
 // ==========================================
 async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
@@ -826,19 +1021,18 @@ async function processLevelCommissions(originPsid, baseAmount) {
 }
 
 // ==========================================
-// 12. UNIFIED SHOP & FREEBIES HUB
+// 14. UNIFIED SHOP & FREEBIES HUB
 // ==========================================
 async function displayShopAndFreebies(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
-  const currentMonth = new Date().toISOString().slice(0, 7);
   
-  let msg = `🛍️ SHOP & FREEBIES HUB\n------------------\n💰 Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n\n🏷️ PREMIUM VOUCHERS (Grind ~1 Mo):\n1️⃣ 2% Voucher — 3.0 Pts\n2️⃣ 5% Voucher — 5.0 Pts\n3️⃣ 10% Voucher — 10.0 Pts\n\n🎁 FREEBIE REWARDS (Under 299 Php | Max 2 Claims/Mo):\n`;
+  let msg = `🛍️ SHOP & FREEBIES HUB\n------------------\n💰 Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n\n🏷️ PREMIUM VOUCHERS (Grind ~1 Mo):\n1️⃣ 2% Voucher — 3.0 Pts\n2️⃣ 5% Voucher — 5.0 Pts\n3️⃣ 10% Voucher — 10.0 Pts\n\n🎁 FREEBIE REWARDS (Under 299 Php | Lifetime Max 2 Claims):\n`;
 
   for (let idx = 0; idx < FREEBIE_REWARDS.length; idx++) {
     const reward = FREEBIE_REWARDS[idx];
-    const claims = await firebaseGet(`users/${psid}/monthlyFreebies/${currentMonth}/${idx}`) || 0;
+    const claims = await firebaseGet(`users/${psid}/lifetimeFreebies/${idx}`) || 0;
     const freebieItem = CATALOG_PRODUCTS[reward.freebieKey];
-    msg += `${idx + 1}️⃣ FREE ${freebieItem.name} (${freebieItem.price.toFixed(2)} Php) — ${reward.pointCost} Pts (Claims: ${claims}/${MAX_MONTHLY_FREEBIE_CLAIMS})\n`;
+    msg += `${idx + 1}️⃣ FREE ${freebieItem.name} (${freebieItem.price.toFixed(2)} Php) — ${reward.pointCost} Pts (Claims: ${claims}/${MAX_LIFETIME_FREEBIE_CLAIMS})\n`;
   }
 
   msg += `\nTap below to purchase or redeem:`;
@@ -889,7 +1083,7 @@ async function processVoucherPurchase(psid, itemKey, user) {
 
     await addVoucherToStorage(psid, voucherCode, item.name, item.discount, item.cost, expiryStr);
 
-    sendQuickReplies(psid, `🎉 PURCHASED!\n------------------\n• Item: ${item.name}\n• Code: ${voucherCode}\n• Balance: ${(latestUser.points - item.cost).toFixed(1)} Pts\n\nWhat would you like to do next?`, [
+    sendQuickReplies(psid, `🎉 PURCHASED & SAVED TO VAULT!\n------------------\n• Item: ${item.name}\n• Reference Code: ${voucherCode}\n• Balance: ${(latestUser.points - item.cost).toFixed(1)} Pts\n\nWhat would you like to do next?`, [
       { title: "🎟️ Apply Now", payload: `CONFIRM_APPLY_${voucherCode}` },
       { title: "📁 View Vault", payload: "NAV_VAULT" },
       { title: "📊 Dashboard", payload: "NAV_STATUS" }
@@ -900,8 +1094,8 @@ async function processVoucherPurchase(psid, itemKey, user) {
 async function processFreebieRedeem(psid, idx, user) {
   if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry.");
   try {
-    if (!(await checkMonthlyFreebieLimit(psid, idx)) && !user.isTester) {
-      return sendQuickReplies(psid, `⚠️ Monthly Freebie Limit Reached: You can only claim this specific freebie ${MAX_MONTHLY_FREEBIE_CLAIMS} times per month!`, getDashboardQuickReplies("NAV_SHOP"));
+    if (!(await checkLifetimeFreebieLimit(psid, idx)) && !user.isTester) {
+      return sendQuickReplies(psid, `⚠️ Lifetime Freebie Limit Reached: You have already reached the maximum of ${MAX_LIFETIME_FREEBIE_CLAIMS} lifetime claims for this reward!`, getDashboardQuickReplies("NAV_SHOP"));
     }
 
     const activeVouchers = (await getUserVouchers(psid)).filter(v => v.status === "ACTIVE");
@@ -921,7 +1115,7 @@ async function processFreebieRedeem(psid, idx, user) {
     }
 
     await updateCachedUser(psid, { points: latestUser.points - reward.pointCost });
-    await incrementMonthlyFreebieCount(psid, idx);
+    await incrementLifetimeFreebieCount(psid, idx);
 
     const expiryDate = new Date();
     expiryDate.setMonth(expiryDate.getMonth() + 2);
@@ -937,7 +1131,7 @@ async function processFreebieRedeem(psid, idx, user) {
     sendImageAttachment(psid, CART_IMAGE_LINKS[1]);
     sendImageAttachment(psid, CART_IMAGE_LINKS[2]);
 
-    let catalogMenu = `🎁 FREEBIE REDEEMED & APPLIED!\n------------------\n• Free Item: ${CATALOG_PRODUCTS[reward.freebieKey].name}\n• Required Companion: ${CATALOG_PRODUCTS[reward.requiredKey].name}\n\n💡 Note: No need to select the required product since it will be added automatically!\n\n🛒 CART BUILDER:\n`;
+    let catalogMenu = `🎁 FREEBIE REDEEMED & SAVED TO VAULT!\n------------------\n• Reference Code: ${voucherCode}\n• Free Item: ${CATALOG_PRODUCTS[reward.freebieKey].name}\n• Required Companion: ${CATALOG_PRODUCTS[reward.requiredKey].name}\n\n💡 Note: No need to select the required product since it will be added automatically!\n\n🛒 CART BUILDER:\n`;
     for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
       catalogMenu += ` ${key}️⃣ ${p.name} — ${p.price.toFixed(2)} Php\n`;
     }
@@ -950,7 +1144,7 @@ async function processFreebieRedeem(psid, idx, user) {
 }
 
 // ==========================================
-// 13. CART CHECKOUT & POS ENGINE
+// 15. CART CHECKOUT & POS ENGINE
 // ==========================================
 async function promptVoucherWarning(psid, code) {
   const vouchers = await getUserVouchers(psid);
@@ -961,7 +1155,7 @@ async function promptVoucherWarning(psid, code) {
   if (target.status === "USED") return sendTextMessage(psid, "⚠️ Voucher already redeemed.");
   if (target.expiryDate < todayStr) return sendTextMessage(psid, "⏰ Voucher has expired.");
 
-  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher CANNOT BE UNDONE! Once confirmed, this voucher will be permanently marked as USED and cannot be returned to your vault!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
+  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher reference code: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher cannot be undone! Once confirmed, this voucher will be permanently marked as USED and cannot be returned to your vault!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
 }
 
 async function initiateVoucherApplyFlow(psid, code, user) {
@@ -1027,7 +1221,7 @@ async function processCartCheckout(psid, text, user, session) {
     for (const [key, qty] of Object.entries(cartCounts)) {
       const lineTotal = CATALOG_PRODUCTS[key].price * qty;
       subtotal += lineTotal;
-      itemizedListMsg += `• ${qty}x ${CATALOG_PRODUCTS[key].name} = ${lineTotal.toFixed(2)} Php${(isFreebie && key === freebieKey) ? " (FREEBIE)" : ""}\n`;
+      itemizedListMsg += `${qty}x ${CATALOG_PRODUCTS[key].name} (${lineTotal.toFixed(2)} Php)${(isFreebie && key === freebieKey) ? " [FREEBIE]" : ""}; `;
     }
 
     let amountSaved = isFreebie ? CATALOG_PRODUCTS[freebieKey].price : subtotal * (parseFloat(targetVoucher.discount || "0") / 100.0);
@@ -1037,8 +1231,17 @@ async function processCartCheckout(psid, text, user, session) {
     const txId = "REF-2026-" + Math.floor(100000 + Math.random() * 900000);
     await firebasePut(`transactions/${txId}`, { timestamp: new Date().toISOString(), psid: psid, customerName: `${user.title} ${user.lastName}`, voucherCode: targetVoucher.code, finalPaid: finalPrice, status: "COMPLETED" });
 
+    await syncToGoogleSheets({
+      action: "LOG_POS_ORDER",
+      customerName: `${user.title} ${user.lastName}`,
+      referenceNo: txId,
+      voucherCode: targetVoucher.code,
+      productDetails: itemizedListMsg,
+      totalPaid: finalPrice.toFixed(2)
+    });
+
     clearSession(psid);
-    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, getDashboardQuickReplies("NONE"));
+    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, getDashboardQuickReplies("NONE"));
   } finally { releaseUserLock(psid); }
 }
 
@@ -1058,7 +1261,7 @@ function formatVoucherLabel(v) {
 }
 
 // ==========================================
-// 14. PROMO CODES & GIFTING
+// 16. PROMO CODES & GIFTING
 // ==========================================
 async function processRedeemCode(psid, promoCode, user) {
   if (!tryUserLock(psid)) return;
@@ -1118,7 +1321,7 @@ async function processGiftSubmission(psid, text, session) {
 }
 
 // ==========================================
-// 15. VAULT DISPLAY
+// 17. VAULT DISPLAY
 // ==========================================
 async function displayVoucherStorage(psid) {
   const vouchers = await getUserVouchers(psid);
@@ -1130,7 +1333,7 @@ async function displayVoucherStorage(psid) {
 
   vouchers.forEach((v, index) => {
     let statusIcon = (v.status === "USED") ? "❌ REDEEMED" : (v.expiryDate < todayStr) ? "⏰ EXPIRED" : "✅ ACTIVE";
-    msg += `[${index + 1}] ${v.code} — ${formatVoucherLabel(v)} (${statusIcon})\n`;
+    msg += `[${index + 1}] Code: ${v.code} — ${formatVoucherLabel(v)} (${statusIcon})\n`;
     
     if (v.status === "ACTIVE" && v.expiryDate >= todayStr && quickReplies.length < 10) {
       quickReplies.push({ title: `🎟️ Apply ${v.code}`, payload: `APPLY_PROMPT_${v.code}` });
@@ -1143,7 +1346,7 @@ async function displayVoucherStorage(psid) {
 }
 
 // ==========================================
-// 16. META GRAPH API (Text, Quick Replies & Images)
+// 18. META GRAPH API (Text, Quick Replies & Images)
 // ==========================================
 function sendTextMessage(psid, text) { callSendAPI({ recipient: { id: psid }, message: { text: text } }); }
 function sendQuickReplies(psid, text, qr) { callSendAPI({ recipient: { id: psid }, message: { text: text, quick_replies: qr.map(q => ({ content_type: "text", title: q.title, payload: q.payload })) } }); }
@@ -1163,7 +1366,7 @@ async function callSendAPI(payload) {
 }
 
 // ==========================================
-// 17. INITIALIZATION APP START
+// 19. INITIALIZATION APP START
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
