@@ -201,18 +201,11 @@ app.get('/unsubscribe', async (req, res) => {
   const psid = await firebaseGet(`emails/${cleanEmailKey}`);
   
   if (psid) {
+    // Soft unsubscribe: update flag instead of deleting record to protect invite/referral chain
     await firebasePatch(`users/${psid}`, { unsubscribed: true });
     cache.del("USER_" + psid);
 
-    const user = await getUserRecord(psid);
-    if (user) {
-      await syncToGoogleSheets({
-        action: "REMOVE_MEMBER",
-        email: user.email
-      });
-    }
-
-    return res.status(200).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Successfully Unsubscribed</h2><p>Your subscription has been ended and your records removed from our active sheet database.</p></body></html>");
+    return res.status(200).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Successfully Unsubscribed</h2><p>You will no longer receive monthly updates.</p></body></html>");
   }
   return res.status(404).send("<html><body style='font-family:Arial;text-align:center;padding:50px;'><h2>❌ Email not found in our system records.</h2></body></html>");
 });
@@ -363,7 +356,7 @@ function getDashboardQuickReplies(currentContext) {
     { title: "📁 Vault", payload: "NAV_VAULT" },
     { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" },
     { title: "🎰 Reward Room", payload: "NAV_REWARD_ROOM" },
-    { title: "💌 Invite & Redeem", payload: "NAV_INVITE_REDEEM" }
+    { title: "🛑 Unsubscribe (5p)", payload: "NAV_UNSUBSCRIBE" }
   ];
   return allButtons.filter(btn => btn.payload !== currentContext);
 }
@@ -617,7 +610,26 @@ async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
   const typoDomains = ["gamil.com", "gmal.com", "yaho.com", "hotmial.com", "outlok.com"];
   if (typoDomains.includes(emailDomain)) return sendTextMessage(psid, `❌ Email Typo Detected: Did you mean @${emailDomain.replace("gamil", "gmail").replace("gmal", "gmail").replace("yaho", "yahoo").replace("hotmial", "hotmail").replace("outlok", "outlook")}?`);
 
-  if (await firebaseGet(`emails/${cleanEmail.replace(/\./g, ',')}`)) return sendTextMessage(psid, "⚠️ Email Already Registered. Type CANCEL to restart.");
+  // Check if previously registered (supports returning unsubscribed users)
+  const existingPsid = await firebaseGet(`emails/${cleanEmail.replace(/\./g, ',')}`);
+  if (existingPsid) {
+    const existingUser = await getUserRecord(existingPsid);
+    if (existingUser && existingUser.unsubscribed) {
+      // Welcome back flow for returning users (no rewards or bonus vouchers issued)
+      await updateCachedUser(existingPsid, { unsubscribed: false });
+      clearSession(psid);
+      
+      // Re-map firebase user data to current PSID if user logged in from a new messenger session
+      if (existingPsid !== psid) {
+        // Migrate records if necessary or just load existing dashboard
+      }
+
+      sendTextMessage(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nYour account has been reactivated successfully. (Note: No new registration rewards are issued for returning accounts).\n\nOpening Dashboard:`);
+      return displayDashboard(psid, await getUserRecord(existingPsid));
+    } else {
+      return sendTextMessage(psid, "⚠️ Email Already Registered. Type CANCEL to restart.");
+    }
+  }
 
   const generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
   
@@ -679,15 +691,22 @@ async function finalizeRegistration(psid, session, appliedRefCode) {
   await firebasePut(`refToPsid/${userRefCode}`, psid);
   await firebasePut(`emails/${session.email.replace(/\./g, ',')}`, psid);
 
+  // Format and send to Google Sheet 'New Mails' Tab
+  // Column A: Year and Month (e.g. "2025 July")
+  // Column B: Prefix formatted as {Title} {Last Name} (e.g. "Elder Encinares")
+  // Column C: Email
+  const batchParts = session.batch.trim().split(/\s+/);
+  const formattedYearMonth = batchParts.length >= 2 ? `${batchParts[1]} ${batchParts[0]}` : session.batch;
+  const prefixLnameFormatted = `${session.title.charAt(0).toUpperCase() + session.title.slice(1).toLowerCase()} ${session.lastName}`;
+
   await syncToGoogleSheets({
-    action: "ADD_MEMBER",
-    email: session.email,
-    title: session.title,
-    lastName: session.lastName,
-    batch: session.batch
+    action: "ADD_NEW_MAIL",
+    yearMonth: formattedYearMonth,
+    prefixLname: prefixLnameFormatted,
+    email: session.email
   });
 
-  if (finalRef && finalRef !== MASTER_REFERRAL_CODE) await distributeUplineCommissions(finalRef, psid, session.email, initialBonus, session.title + " " + session.lastName);
+  if (finalRef && finalRef !== MASTER_REFERRAL_CODE) await distributeUplineCommissions(finalRef, psid, session.email, initialBonus, prefixLnameFormatted);
 
   const expiryDate = new Date();
   expiryDate.setMonth(expiryDate.getMonth() + 1);
@@ -710,7 +729,7 @@ async function grantTesterAccess(psid) {
   if (!user) {
     const adminRefCode = await generateCompactReferralCode();
     await firebasePut(`users/${psid}`, {
-      email: `tester_${psid}@internal.dev`, title: "ADMIN", lastName: "TESTER", batch: "N/A",
+      email: `tester_${psid}@internal.dev`, title: "Elder", lastName: "Tester", batch: "August 2026",
       refCode: adminRefCode, appliedRefCode: MASTER_REFERRAL_CODE,
       points: ADMIN_STARTING_POINTS, giftedPointsReceived: 0.0, passiveRefPoints: 0.0,
       lastMinedTimestamp: "", isTester: true, unsubscribed: false, registeredAt: new Date().toISOString()
@@ -718,14 +737,13 @@ async function grantTesterAccess(psid) {
     await firebasePut(`refToPsid/${adminRefCode}`, psid);
     
     await syncToGoogleSheets({
-      action: "ADD_MEMBER",
-      email: `tester_${psid}@internal.dev`,
-      title: "ADMIN",
-      lastName: "TESTER",
-      batch: "N/A"
+      action: "ADD_NEW_MAIL",
+      yearMonth: "2026 August",
+      prefixLname: "Elder Tester",
+      email: `tester_${psid}@internal.dev`
     });
   } else {
-    await updateCachedUser(psid, { points: ADMIN_STARTING_POINTS, isTester: true, title: "ADMIN", lastName: "TESTER" });
+    await updateCachedUser(psid, { points: ADMIN_STARTING_POINTS, isTester: true, title: "Elder", lastName: "Tester" });
   }
   clearSession(psid);
   cache.del("USER_" + psid);
@@ -736,13 +754,6 @@ async function grantTesterAccess(psid) {
 async function revokeAndResetAccount(psid) {
   const user = await getUserRecord(psid);
   if (!user) return sendTextMessage(psid, "❌ No profile found.");
-
-  if (user.email) {
-    await syncToGoogleSheets({
-      action: "REMOVE_MEMBER",
-      email: user.email
-    });
-  }
 
   if (user.refCode) await firebaseDelete(`refToPsid/${user.refCode}`);
   if (user.email) await firebaseDelete(`emails/${user.email.replace(/\./g, ',')}`);
@@ -928,7 +939,7 @@ async function executeRewardRoomDraw(todayStr, room) {
 }
 
 // ==========================================
-// 12. PAID UNSUBSCRIBE FEATURE
+// 12. PAID UNSUBSCRIBE FEATURE WITH WARNING
 // ==========================================
 async function promptPaidUnsubscribe(psid, user) {
   if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", getDashboardQuickReplies("NAV_STATUS"));
@@ -936,7 +947,7 @@ async function promptPaidUnsubscribe(psid, user) {
     return sendQuickReplies(psid, `❌ Insufficient Points: Unsubscribing costs ${UNSUBSCRIBE_POINT_COST} Pts. You currently have ${user.points.toFixed(1)} Pts.`, getDashboardQuickReplies("NAV_STATUS"));
   }
 
-  sendQuickReplies(psid, `🛑 PAID UNSUBSCRIBE SERVICE\n------------------\nEnding your subscription and removing your records from our database costs ${UNSUBSCRIBE_POINT_COST} Pts.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
+  sendQuickReplies(psid, `🛑 WARNING: PAID UNSUBSCRIBE\n------------------\nBy unsubscribing, you will remove your monthly email updates you receive from us.\n\nThis action costs ${UNSUBSCRIBE_POINT_COST} Pts. Your account status will be marked as unsubscribed while preserving network integrity.\n\n• Current Balance: ${user.points.toFixed(1)} Pts\n• Cost: -${UNSUBSCRIBE_POINT_COST} Pts\n\nAre you sure you want to proceed?`, [
     { title: "🛑 Confirm Unsubscribe", payload: "CONFIRM_UNSUBSCRIBE" },
     { title: "📊 Dashboard", payload: "NAV_STATUS" }
   ]);
@@ -953,13 +964,19 @@ async function processPaidUnsubscribe(psid, user) {
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - UNSUBSCRIBE_POINT_COST;
     await updateCachedUser(psid, { points: newBalance, unsubscribed: true });
 
-    await syncToGoogleSheets({
-      action: "REMOVE_MEMBER",
-      email: latestUser.email
-    });
+    // Slight disadvantage adjustment for the direct upline if applicable
+    if (latestUser.appliedRefCode && latestUser.appliedRefCode !== MASTER_REFERRAL_CODE) {
+      const uplineUser = await getUserRecordByRefCode(latestUser.appliedRefCode);
+      if (uplineUser) {
+        // Example slight adjustment (e.g., small reduction in passive ref points tracking)
+        const adjustedPassive = Math.max(0, (uplineUser.passiveRefPoints || 0) - 1.0);
+        await updateCachedUser(uplineUser.psid, { passiveRefPoints: adjustedPassive });
+        sendTextMessage(uplineUser.psid, `⚠️ Network Notice: One of your invited downline members has unsubscribed.`);
+      }
+    }
 
     clearSession(psid);
-    sendTextMessage(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYour subscription has ended and your data has been removed from our active Google Sheet records.`);
+    sendTextMessage(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYou will no longer receive monthly email updates.`);
   } finally {
     releaseUserLock(psid);
   }
