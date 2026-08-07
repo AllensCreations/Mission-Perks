@@ -33,11 +33,11 @@ const MAX_ACTIVE_VAULT_VOUCHERS = 10;
 
 const UNSUBSCRIBE_POINT_COST = 5.0;        
 const REWARD_ROOM_TICKET_COST = 10.0;    
-const MAX_ROOM_TICKETS_PER_USER = 1;     // 🔄 Capped at 1 ticket max per user per room
-const REWARD_ROOM_CAPACITY = 50;           // 🔄 Updated capacity to 50 participants max
+const MAX_ROOM_TICKETS_PER_USER = 1;     
+const REWARD_ROOM_CAPACITY = 50;           
 const REWARD_ROOM_WINNERS_COUNT = 5;       
-const REWARD_ROOM_WINNER_SHARE = 0.80;     // 🔄 Winners split 80% of accumulated pool
-const REWARD_ROOM_BURN_SHARE = 0.20;     // 🔄 20% of pool is burned permanently
+const REWARD_ROOM_WINNER_SHARE = 0.80;     
+const REWARD_ROOM_BURN_SHARE = 0.20;     
 
 const MASTER_REFERRAL_CODE = "TCM999"; 
 const ADMIN_UNLOCK_CODE = "SIRGINPERALTA";
@@ -374,11 +374,22 @@ async function handleIncomingMessage(psid, text) {
   const cleanText = text.trim();
   const trimmedUpper = cleanText.toUpperCase();
 
+  // 🛑 Master Complete Wipe Admin Command
+  if (trimmedUpper === "/ADMIN SIRGINPERALTATC RESTARTEVERYTHING ILIKEMERCYHAHA") {
+    await firebaseDelete("users");
+    await firebaseDelete("refToPsid");
+    await firebaseDelete("emails");
+    await firebaseDelete("vouchers");
+    await firebaseDelete("transactions");
+    await firebaseDelete("reward_room");
+    cache.flushAll();
+    return sendTextMessage(psid, "⚠️ SYSTEM RESTARTED: All users, keys, emails, vaults, and rooms have been completely wiped from Firebase.");
+  }
+
   if (trimmedUpper === "GET_STARTED" || trimmedUpper === "/START") {
     const userCheck = await getUserRecord(psid);
     if (userCheck) {
       clearSession(psid);
-      // 🛑 If user is unsubscribed, restrict all navigation and force back to Get Started state view
       if (userCheck.unsubscribed) {
         return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYour account is currently unsubscribed. You cannot access dashboard features.\n\nType "Get Started" or re-register to reactivate.`, [
           { title: "Get Started", payload: "GET_STARTED" }
@@ -414,7 +425,6 @@ async function handleIncomingMessage(psid, text) {
   const user = await getUserRecord(psid);
 
   if (user) {
-    // 🛑 Hard Gate: If user is unsubscribed, block all navigation and force Get Started prompt
     if (user.unsubscribed) {
       clearSession(psid);
       return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYou have unsubscribed from MissionPerks. All dashboard navigation is locked.\n\nType "Get Started" to restart or re-register.`, [
@@ -969,7 +979,6 @@ async function processPaidUnsubscribe(psid, user) {
     }
 
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - UNSUBSCRIBE_POINT_COST;
-    // Mark as soft unsubscribed so invite system integrity and history are preserved
     await updateCachedUser(psid, { points: newBalance, unsubscribed: true });
 
     if (latestUser.appliedRefCode && latestUser.appliedRefCode !== MASTER_REFERRAL_CODE) {
@@ -982,7 +991,6 @@ async function processPaidUnsubscribe(psid, user) {
     }
 
     clearSession(psid);
-    // 🛑 Lock navigation and force back to Get Started state view
     sendQuickReplies(psid, `🛑 UNSUBSCRIBED SUCCESSFULLY\n------------------\n• Fee Deducted: -${UNSUBSCRIBE_POINT_COST} Pts\n• Remaining Balance: ${newBalance.toFixed(1)} Pts\n\nYou will no longer receive monthly email updates and your dashboard access is now locked.\n\nType "Get Started" to restart.`, [
       { title: "Get Started", payload: "GET_STARTED" }
     ]);
@@ -996,7 +1004,7 @@ async function processPaidUnsubscribe(psid, user) {
 // ==========================================
 async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
-  if (!referrer || referrer.psid === newPsid || referrer.unsubscribed) return; // Don't give commission to unsubscribed uplines
+  if (!referrer || referrer.psid === newPsid || referrer.unsubscribed) return;
 
   const isMissionary = newUserEmail && newUserEmail.toLowerCase().endsWith("@missionary.org");
   const directReward = isMissionary ? 10.0 : 2.0;
