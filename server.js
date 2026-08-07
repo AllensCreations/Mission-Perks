@@ -10,10 +10,8 @@ require('dotenv').config();
 const app = express();
 app.use(bodyParser.json());
 
-// 💡 Improved safety limit: added maxKeys to prevent OOM memory leaks
 const cache = new NodeCache({ stdTTL: 600, checkperiod: 120, maxKeys: 10000 });
 
-// Global Unhandled Rejection safety net
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -466,7 +464,7 @@ async function handleIncomingMessage(psid, text) {
   }
   if (trimmedUpper === "MENU_INVITE") {
     const userCheck = await getUserRecord(psid);
-    if (!userCheck) {
+    if (!userCheck || userCheck.unsubscribed) {
       return sendQuickReplies(psid, "💌 INVITE\n------------------\nPlease register first using 'Get Started' to get your personal invitation key!", [
         { title: "Get Started", payload: "GET_STARTED" }
       ]);
@@ -478,13 +476,17 @@ async function handleIncomingMessage(psid, text) {
     ]);
   }
 
+  // 🛑 Welcome / Get Started Handler with Re-activation check for unsubscribed users
   if (trimmedUpper === "GET_STARTED" || trimmedUpper === "/START") {
     const userCheck = await getUserRecord(psid);
     if (userCheck) {
       clearSession(psid);
       if (userCheck.unsubscribed) {
-        return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYour account is currently unsubscribed. You cannot access dashboard features.\n\nType "Get Started" or re-register to reactivate.`, [
-          { title: "Get Started", payload: "GET_STARTED" }
+        // 💡 Trigger Reactivation Welcome Back Confirmation Flow instead of looping error message
+        setSession(psid, { state: "AWAITING_REACTIVATION_CONFIRM", psid: psid });
+        return sendQuickReplies(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nWe noticed your account was previously unsubscribed. Would you like to reactivate your account?\n\n🎁 Welcome Back Gift: We will refund your 5 activation points (+5.0 Pts) upon confirmation!`, [
+          { title: "✅ Yes, Reactivate", payload: "CONFIRM_REACTIVATE" },
+          { title: "❌ Cancel", payload: "CANCEL" }
         ]);
       }
       return displayDashboard(psid, userCheck);
@@ -519,22 +521,42 @@ async function handleIncomingMessage(psid, text) {
     return sendTextMessage(psid, "❌ Usage: /ADMIN RESETOTP your_email@gmail.com");
   }
 
+  let session = getSession(psid);
+
+  // 💡 Check if user is in reactivation confirmation flow
+  if (session && session.state === "AWAITING_REACTIVATION_CONFIRM") {
+    if (trimmedUpper === "CONFIRM_REACTIVATE" || trimmedUpper === "YES" || trimmedUpper === "AGREE") {
+      const targetPsid = session.psid;
+      const targetUser = await getUserRecord(targetPsid);
+      if (targetUser) {
+        const refundedPoints = targetUser.points + 5.0; // Refund the 5 unsub points as welcome back gift
+        await updateCachedUser(targetPsid, { unsubscribed: false, points: refundedPoints });
+        clearSession(psid);
+        sendTextMessage(psid, `🎉 ACCOUNT REACTIVATED!\n------------------\n🎁 Welcome Back Gift Added: +5.0 Pts Refunded!\n• New Balance: ${refundedPoints.toFixed(1)} Pts\n\nOpening Dashboard:`);
+        return displayDashboard(psid, await getUserRecord(targetPsid));
+      }
+    } else {
+      clearSession(psid);
+      return sendTextMessage(psid, "🔄 Reactivation cancelled. Send 'Get Started' whenever you're ready.");
+    }
+  }
+
   const user = await getUserRecord(psid);
 
   if (user) {
     if (user.unsubscribed) {
       clearSession(psid);
-      return sendQuickReplies(psid, `🛑 ACCOUNT UNSUBSCRIBED\n------------------\nYou have unsubscribed from MissionPerks. All dashboard navigation is locked.\n\nType "Get Started" to restart or re-register.`, [
-        { title: "Get Started", payload: "GET_STARTED" }
+      setSession(psid, { state: "AWAITING_REACTIVATION_CONFIRM", psid: psid });
+      return sendQuickReplies(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nWe noticed your account was previously unsubscribed. Would you like to reactivate your account?\n\n🎁 Welcome Back Gift: We will refund your 5 activation points (+5.0 Pts) upon confirmation!`, [
+        { title: "✅ Yes, Reactivate", payload: "CONFIRM_REACTIVATE" },
+        { title: "❌ Cancel", payload: "CANCEL" }
       ]);
     }
 
-    if (trimmedUpper === "NAV_STATUS" || trimmedUpper === "/START" || trimmedUpper === "GET_STARTED") {
+    if (trimmedUpper === "NAV_STATUS" || trimmedUpper === "/START") {
       clearSession(psid);
       return displayDashboard(psid, user);
     }
-
-    let session = getSession(psid);
 
     if (session) {
       if (trimmedUpper === "NAV_STATUS" || trimmedUpper === "BACK_TO_DASHBOARD") {
@@ -568,7 +590,6 @@ async function handleIncomingMessage(psid, text) {
     return displayDashboard(psid, user);
   }
 
-  let session = getSession(psid);
   let currentRef = getDirectRef(psid);
 
   if (!session) {
@@ -746,11 +767,13 @@ async function handleEmailAndSendOTP(psid, cleanEmail, session, isMasterFlow) {
   if (existingPsid) {
     const existingUser = await getUserRecord(existingPsid);
     if (existingUser && existingUser.unsubscribed) {
-      await updateCachedUser(existingPsid, { unsubscribed: false });
+      // 💡 Prevent duplicate email re-registration loop: direct them to reactivate instead
       clearSession(psid);
-
-      sendTextMessage(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nYour account has been reactivated successfully. (Note: No new registration rewards are issued for returning accounts).\n\nOpening Dashboard:`);
-      return displayDashboard(psid, await getUserRecord(existingPsid));
+      setSession(psid, { state: "AWAITING_REACTIVATION_CONFIRM", psid: existingPsid });
+      return sendQuickReplies(psid, `👋 WELCOME BACK TO TIMELESS CREATIONS!\n------------------\nThis email is already linked to an existing account. Would you like to reactivate your account?\n\n🎁 Welcome Back Gift: We will refund your 5 activation points (+5.0 Pts) upon confirmation!`, [
+        { title: "✅ Yes, Reactivate", payload: "CONFIRM_REACTIVATE" },
+        { title: "❌ Cancel", payload: "CANCEL" }
+      ]);
     } else {
       return sendTextMessage(psid, "⚠️ Email Already Registered. Type CANCEL to restart.");
     }
@@ -954,7 +977,6 @@ async function processDailyRedeem(psid, user) {
     
     await distributeDailyYieldCommissions(psid, dailyRate);
 
-    // 💡 Auto-back & invite prompt integration after successful claim
     sendQuickReplies(psid, `🎉 DAILY YIELD REDEEMED!\n------------------\n• Claimed: +${dailyRate.toFixed(1)} Points\n• Total Balance: ${newBalance.toFixed(1)} Points\n\nWant to add more? Invite friends using your key to earn rewards and unlock daily bonuses!\n\n🔑 Your Key: ${latestUser.refCode}\n👉 Share link: ${REFERRAL_BASE_URL}?ref=${latestUser.refCode}`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" },
@@ -996,7 +1018,6 @@ async function processJoinRewardRoom(psid, user) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const roomRef = db.ref(`reward_room/${todayStr}`);
     
-    // 💡 Applied atomic transaction to eliminate concurrency race conditions
     let transactionSuccess = false;
     let newBalance = latestUser.points;
 
@@ -1005,11 +1026,11 @@ async function processJoinRewardRoom(psid, user) {
         currentRoom = { participants: {}, ticketCount: 0, drawn: false };
       }
       if (currentRoom.drawn || currentRoom.ticketCount >= REWARD_ROOM_CAPACITY) {
-        return; // Abort
+        return; 
       }
       const currentTickets = currentRoom.participants[psid] || 0;
       if (currentTickets >= MAX_ROOM_TICKETS_PER_USER) {
-        return; // Abort limit reached
+        return; 
       }
       currentRoom.participants[psid] = currentTickets + 1;
       currentRoom.ticketCount++;
@@ -1018,7 +1039,7 @@ async function processJoinRewardRoom(psid, user) {
     });
 
     if (!transactionSuccess) {
-      return sendQuickReplies(psid, `⚠️ Unable to buy ticket: Room may be full, already drawn, or you have already purchased your ticket limit.`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
+      return sendQuickReplies(psid, `⚠️ Unable to buy ticket: Room may be full, already drawn, or you have already purchased your maximum of ${MAX_ROOM_TICKETS_PER_USER} ticket for this room!`, getDashboardQuickReplies("NAV_REWARD_ROOM"));
     }
 
     newBalance = latestUser.isTester ? latestUser.points : latestUser.points - REWARD_ROOM_TICKET_COST;
@@ -1441,7 +1462,6 @@ async function processRedeemCode(psid, promoCode, user) {
     const newBalance = user.points + parseFloat(codeRecord.value || 0);
     await updateCachedUser(psid, { points: newBalance });
 
-    // 💡 Auto-back feature after claiming code successfully
     sendQuickReplies(psid, `🎉 CODE CLAIMED!\n------------------\n• Code: ${promoCode}\n• Reward: +${parseFloat(codeRecord.value || 0).toFixed(1)} Pts\n• Balance: ${newBalance.toFixed(1)} Pts`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
@@ -1483,7 +1503,6 @@ async function processGiftSubmission(psid, text, session) {
     } finally { releaseUserLock(recipient.psid); }
 
     clearSession(psid);
-    // 💡 Auto-back feature after sending gift
     sendQuickReplies(psid, `🎁 Sent ${giftAmount} pts to ${targetRefCode}.`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
