@@ -30,8 +30,6 @@ const MAX_DAILY_OTP_PER_USER = 1;
 const MINING_UNLOCK_NORMAL_INVITES = 10;   
 const MINING_UNLOCK_MISSIONARY_INVITES = 3; 
 const MINING_COOLDOWN_HOURS = 24;         
-
-// 🔄 Removed global MAX_REFERRALS_PER_USER cap; replaced with rule: Normal emails capped at 20 invites, @missionary.org unlimited!
 const MAX_NORMAL_REFERRALS = 20;        
 
 const TIER_2_INVITE_THRESHOLD = 10;       
@@ -1180,9 +1178,8 @@ async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, i
   const isMissionary = newUserEmail && newUserEmail.toLowerCase().endsWith("@missionary.org");
   const stats = getInviteStats(referrer);
 
-  // 💡 Enforce Normal invite cap of 20. If normal invites >= 20, normal invites no longer reward or register!
   if (!isMissionary && stats.normalCount >= MAX_NORMAL_REFERRALS) {
-    sendTextMessage(referrer.psid, `⚠️ Referral Limit Reached: You have reached the maximum cap of ${MAX_NORMAL_REFERRALS} normal invites. Invite `@missionary.org` emails for unlimited rewards!`);
+    sendTextMessage(referrer.psid, `⚠️ Referral Limit Reached: You have reached the maximum cap of ${MAX_NORMAL_REFERRALS} normal invites. Invite @missionary.org emails for unlimited rewards!`);
     return;
   }
 
