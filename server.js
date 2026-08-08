@@ -17,22 +17,22 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // ==========================================
-// 1. CONFIGURATION & SYSTEM CONSTANTS (Balanced Grinds & Invites)
+// 1. CONFIGURATION & SYSTEM CONSTANTS (Balanced Grinds & Super Freebies)
 // ==========================================
 const VIP_POINT_THRESHOLD = 20.0;          
 const MONTHLY_VOUCHER_LIMIT = 10;          
-const MAX_LIFETIME_FREEBIE_CLAIMS = 1;     // 🔄 Updated max lifetime claims to 1 (disappears forever once claimed)
+const MAX_LIFETIME_FREEBIE_CLAIMS = 1;     
 
 const MAX_DAILY_MESSAGES = 15;             
 const MAX_DAILY_GLOBAL_SIGNUPS = 100;      
 const MAX_DAILY_OTP_PER_USER = 1;          
 
-const MINING_UNLOCK_NORMAL_INVITES = 10;   // 🔄 Required 10 normal invites to unlock daily redeem
-const MINING_UNLOCK_MISSIONARY_INVITES = 3; // 🔄 Or required 3 missionary invites to unlock daily redeem
+const MINING_UNLOCK_NORMAL_INVITES = 10;   
+const MINING_UNLOCK_MISSIONARY_INVITES = 3; 
 const MINING_COOLDOWN_HOURS = 24;         
 const MAX_REFERRALS_PER_USER = 10;        
 const TIER_2_INVITE_THRESHOLD = 10;       
-const MISSIONARY_INVITE_REQUIREMENT = 3;  // 🔄 Updated missionary requirement to 3 invites
+const MISSIONARY_INVITE_REQUIREMENT = 3;  
 const MAX_ACTIVE_VAULT_VOUCHERS = 10;     
 
 const UNSUBSCRIBE_POINT_COST = 5.0;        
@@ -76,19 +76,20 @@ const CATALOG_PRODUCTS = {
   "8": { name: "Mission Memento", price: 599.00 }
 };
 
-// Vouchers balanced for 3-month grind (approx 45 pts at 0.5p/day or 30 days * 3 months)
+// Vouchers balanced for 3-month grind
 const SHOP_PRODUCTS = {
   "1": { name: "2% Premium Voucher", cost: 15.0, discount: 2, type: "WHOLESALE" },
   "2": { name: "5% Premium Voucher", cost: 30.0, discount: 5, type: "WHOLESALE" },
   "3": { name: "10% Premium Voucher", cost: 45.0, discount: 10, type: "WHOLESALE" }
 };
 
-// Freebies balanced for 10-month grind (approx 150 pts)
+// Freebies balanced for 10-month grind + Super Freebie (Scripture Case @ 1000 Pts)
 const FREEBIE_REWARDS = [
   { pointCost: 45.0, freebieKey: "4", requiredKey: "1" }, 
   { pointCost: 75.0, freebieKey: "1", requiredKey: "2" }, 
   { pointCost: 110.0, freebieKey: "3", requiredKey: "5" }, 
-  { pointCost: 150.0, freebieKey: "2", requiredKey: "7" }  
+  { pointCost: 150.0, freebieKey: "2", requiredKey: "7" },
+  { pointCost: 1000.0, freebieKey: "7", requiredKey: "6", isSuper: true } // 🌟 Super Freebie Scripture Case
 ];
 
 // ==========================================
@@ -630,7 +631,7 @@ Thank you for being a valued part of our community! ❤️
 
     if (trimmedUpper.startsWith("CONFIRM_APPLY_")) return initiateVoucherApplyFlow(psid, trimmedUpper.replace("CONFIRM_APPLY_", "").trim(), user);
     if (trimmedUpper.startsWith("APPLY_PROMPT_")) return promptVoucherWarning(psid, trimmedUpper.replace("APPLY_PROMPT_", "").trim());
-    if (trimmedUpper.startsWith("/REDEEM") || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
+    if (trimmedUpper.startsWith("/REDEEM" ) || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
     if (trimmedUpper.startsWith("/APPLY")) return promptVoucherWarning(psid, text.replace(/\/apply/i, "").trim().toUpperCase());
 
     return displayDashboard(psid, user);
@@ -986,7 +987,12 @@ async function displayDashboard(psid, user) {
 
 function displayInviteAndRedeemHub(psid, user) {
   const stats = getInviteStats(user);
-  let instructionsMsg = `💌 INVITE HUB & REDEEM\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} Invites (${stats.normalCount}/10 Normal or ${stats.missionaryCount}/3 Missionary)\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!\n\n✨ Share link:\n👉 ${REFERRAL_BASE_URL}?ref=${user.refCode}`;
+  
+  // 💡 Separate dedicated invite marketing message prompt
+  let separateInviteMsg = `📢 JOIN MY GROUP & EARN REWARDS!\n------------------\nJoin my group and earn points for vouchers and freebies! Share your invitation link below with friends and fellow members:\n\n👉 ${REFERRAL_BASE_URL}?ref=${user.refCode}`;
+  sendTextMessage(psid, separateInviteMsg);
+
+  let instructionsMsg = `💌 INVITE HUB & REDEEM\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} Invites (${stats.normalCount}/10 Normal or ${stats.missionaryCount}/3 Missionary)\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!`;
   
   sendQuickReplies(psid, instructionsMsg, [
     { title: "🎁 Claim Daily Redeem", payload: "NAV_DAILY_REDEEM" },
@@ -1279,13 +1285,13 @@ async function displayShopAndFreebies(psid, user) {
     const reward = FREEBIE_REWARDS[idx];
     const claims = await firebaseGet(`users/${psid}/lifetimeFreebies/${idx}`) || 0;
     const freebieItem = CATALOG_PRODUCTS[reward.freebieKey];
+    const itemPrefix = reward.isSuper ? "🌟 SUPER FREEBIE: " : "FREE ";
 
     if (claims < MAX_LIFETIME_FREEBIE_CLAIMS) {
-      msg += `${idx + 1}️⃣ FREE ${freebieItem.name} (${freebieItem.price.toFixed(2)} Php) — ${reward.pointCost} Pts\n`;
+      msg += `${idx + 1}️⃣ ${itemPrefix}${freebieItem.name} (${freebieItem.price.toFixed(2)} Php) — ${reward.pointCost} Pts\n`;
       quickReplies.push({ title: `🎁 ${freebieItem.name} (${reward.pointCost}p)`, payload: `FREEBIE_REDEEM_${idx}` });
     } else {
-      // 💡 If claimed once, it disappears from shop. Offer restock option!
-      msg += `${idx + 1}️⃣ ~~FREE ${freebieItem.name}~~ (Claimed & Disappeared)\n`;
+      msg += `${idx + 1}️⃣ ~~${itemPrefix}${freebieItem.name}~~ (Claimed & Disappeared)\n`;
       quickReplies.push({ title: `🔄 Restock ${freebieItem.name} (${reward.pointCost}p)`, payload: `RESTOCK_FREEBIE_${idx}` });
     }
   }
@@ -1390,7 +1396,6 @@ async function processFreebieRedeem(psid, idx, user) {
   }
 }
 
-// 💡 Restock Freebie by paying equal point cost to reset lifetime claim count back to 0
 async function processFreebieRestock(psid, idx, user) {
   if (!tryUserLock(psid)) return sendTextMessage(psid, "⚠️ System Busy. Please retry.");
   try {
@@ -1404,8 +1409,6 @@ async function processFreebieRestock(psid, idx, user) {
 
     const newBalance = latestUser.isTester ? latestUser.points : latestUser.points - reward.pointCost;
     await updateCachedUser(psid, { points: newBalance });
-    
-    // Reset lifetime claim count to 0 so it reappears in the shop!
     await firebasePut(`users/${psid}/lifetimeFreebies/${idx}`, 0);
 
     const freebieItem = CATALOG_PRODUCTS[reward.freebieKey];
