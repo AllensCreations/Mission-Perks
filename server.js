@@ -473,7 +473,8 @@ async function handleIncomingMessage(psid, text) {
 
   // Persistent Menu Option Handlers
   if (trimmedUpper === "MENU_ABOUT") {
-    return sendTextMessage(psid, "ℹ️ ABOUT MISSIONPERKS & CREATORS\n------------------\n📌 **About the App:**\nMissionPerks is an extension of our shop 'Timeless Creations', where we sell freebies and vouchers in order for you, as customers, to enjoy the freebies we can give!\n\n📌 **Why We Created It:**\nOur business is owned by my friend Sirgin Jacob Peralta, and we built this platform to help widen our reach and give back awesome perks to our community.\n\n👨‍💻 **About the Creator:**\nHi! I'm Mark Allen B. Salviejo, BSEE major. I created this Messenger bot! This bot is just one of my 3 AM thoughts, and I can't even believe it works.\n\nIf you want to automate your Messenger bot, please contact me at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!");
+    return sendTextMessage(psid, "ℹ️ ABOUT MISSIONPERKS & CREATORS\n------------------\n📌 **About the App:**\nMissionPerks is an extension of our shop 'Timeless Creations', created so you can easily access exclusive vouchers, rewards, and freebies!\n\n📌 **Why We Created It:**\nOur shop built this platform to widen our reach, connect with our community, and give back awesome perks to our loyal customers.\n\n👨‍💻 **About the Creator:**\nHi! I'm an Electrical Engineering student who created this Messenger bot! This project started as one of my 3 AM thoughts, and I'm thrilled to see it fully functional and helping users today.\n\nIf you want to automate your Messenger bot or need custom chat solutions for your business, please contact me for freelance projects at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!
+");
   }
   if (trimmedUpper === "MENU_TC") {
     return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nThank you for trusting Timeless Creations!");
@@ -1211,7 +1212,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
 }
 
 // ==========================================
-// 15. UNIFIED SHOP & FREEBIES HUB (Capped QR Hidden & Numbered 1-8)
+// 15. UNIFIED SHOP & FREEBIES HUB
 // ==========================================
 async function displayShopAndFreebies(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
@@ -1333,7 +1334,7 @@ async function processFreebieRedeem(psid, idx, user) {
     
     let index = 0;
     for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
-      catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ${p.price.toFixed(2)} Php\n`;
+      catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ₱${p.price.toFixed(2)}\n`;
       index++;
     }
     catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write numbers out (e.g. 5,5,1).\n\n⬅️ Or type "Back" to return to the dashboard.`;
@@ -1345,7 +1346,7 @@ async function processFreebieRedeem(psid, idx, user) {
 }
 
 // ==========================================
-// 16. CART CHECKOUT & POS ENGINE (Numbered 1-8 for Catalog)
+// 16. CART CHECKOUT & POS ENGINE (Formatted breakdown with | and ₱)
 // ==========================================
 async function promptVoucherWarning(psid, code) {
   const vouchers = await getUserVouchers(psid);
@@ -1374,7 +1375,7 @@ async function initiateVoucherApplyFlow(psid, code, user) {
   
   let index = 0;
   for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
-    catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ${p.price.toFixed(2)} Php\n`;
+    catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ₱${p.price.toFixed(2)}\n`;
     index++;
   }
   
@@ -1425,10 +1426,16 @@ async function processCartCheckout(psid, text, user, session) {
 
     let subtotal = 0.0;
     let itemizedListMsg = "";
+    let itemizedDisplayTable = "";
+
     for (const [key, qty] of Object.entries(cartCounts)) {
       const lineTotal = CATALOG_PRODUCTS[key].price * qty;
       subtotal += lineTotal;
-      itemizedListMsg += `${qty}x ${CATALOG_PRODUCTS[key].name} (${lineTotal.toFixed(2)} Php)${(isFreebie && key === freebieKey) ? " [FREEBIE]" : ""}; `;
+      const itemNameTag = `${qty} x ${CATALOG_PRODUCTS[key].name}${(isFreebie && key === freebieKey) ? " [FREEBIE]" : ""}`;
+      const linePriceTag = `₱${lineTotal.toFixed(2)}`;
+      
+      itemizedListMsg += `${itemNameTag} (${linePriceTag}); `;
+      itemizedDisplayTable += `| ${itemNameTag} | ${linePriceTag} |\n`;
     }
 
     let amountSaved = isFreebie ? CATALOG_PRODUCTS[freebieKey].price : subtotal * (parseFloat(targetVoucher.discount || "0") / 100.0);
@@ -1449,7 +1456,7 @@ async function processCartCheckout(psid, text, user, session) {
     });
 
     clearSession(psid);
-    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n🗑️ Note: Used voucher has been automatically deleted from your vault to save space.\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, [
+    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedDisplayTable}------------------\n💰 PAYABLE TOTAL: ₱${finalPrice.toFixed(2)}\n🎉 AMOUNT SAVED: ₱${amountSaved.toFixed(2)}\n------------------\n\n🗑️ Note: Used voucher has been automatically deleted from your vault to save space.\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "📁 Vault", payload: "NAV_VAULT" },
       { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
