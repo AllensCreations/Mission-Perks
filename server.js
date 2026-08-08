@@ -491,18 +491,17 @@ This interactive experience was custom-engineered from scratch to manage custome
 Turn passive visitors into loyal customers! I build custom Messenger bots that automate customer support, handle orders, launch reward programs, and scale sales automatically. 
 
 📬 Work With Me (Freelance Services):
-• Email: salviejomark2019@gmail.com
-• Direct Message: https://m.me/MrMisterYosoo
+📧 salviejomark2019@gmail.com
+💬 https://m.me/MrMisterYosoo
 
 ---
 
 🛍️ CONNECT WITH TIMELESS CREATIONS
 Have questions about our shop, products, or your active perks?
-• Email: Timelesscreations.ph@gmail.com
-• Direct Message: https://m.me/timeless.creations.06
+📧 Timelesscreations.ph@gmail.com
+💬 https://m.me/timeless.creations.06
 
 Thank you for being a valued part of our community! ❤️
-
 `);
   }
   if (trimmedUpper === "MENU_TC") {
