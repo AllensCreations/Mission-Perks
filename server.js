@@ -187,8 +187,16 @@ function releaseUserLock(psid) {
 }
 
 // ==========================================
-// 3. WEBHOOK HANDLERS (GET & POST)
+// 3. WEBHOOK & KEEP-ALIVE PING ENDPOINTS
 // ==========================================
+app.get('/', (req, res) => {
+  return res.status(200).send("🚀 MissionPerks Bot Server is Active & Healthy!");
+});
+
+app.get('/ping', (req, res) => {
+  return res.status(200).send("PONG");
+});
+
 app.get('/webhook', (req, res) => {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === VERIFY_TOKEN) {
@@ -1203,10 +1211,11 @@ async function processLevelCommissions(originPsid, baseAmount) {
 }
 
 // ==========================================
-// 15. UNIFIED SHOP & FREEBIES HUB
+// 15. UNIFIED SHOP & FREEBIES HUB (Capped QR Hidden & Numbered 1-8)
 // ==========================================
 async function displayShopAndFreebies(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
+  const isCapped = !monthlyCheck.allowed && !user.isTester;
   
   let msg = `🛍️ SHOP & FREEBIES HUB\n------------------\n💰 Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n\n🏷️ PREMIUM VOUCHERS (Grind ~1 Mo):\n1️⃣ 2% Voucher — 3.0 Pts\n2️⃣ 5% Voucher — 5.0 Pts\n3️⃣ 10% Voucher — 10.0 Pts\n\n🎁 FREEBIE REWARDS (Under 299 Php | Lifetime Max 2 Claims):\n`;
 
@@ -1219,11 +1228,18 @@ async function displayShopAndFreebies(psid, user) {
 
   msg += `\nTap below to purchase or redeem:`;
 
-  const quickReplies = [
-    { title: "🎟️ Buy 2%", payload: "BUY_VOUCHER_2" },
-    { title: "🎟️ Buy 5%", payload: "BUY_VOUCHER_5" },
-    { title: "🎟️ Buy 10%", payload: "BUY_VOUCHER_10" }
-  ];
+  const quickReplies = [];
+
+  // 💡 If monthly cap is reached, hide purchase quick replies until next month!
+  if (!isCapped) {
+    quickReplies.push(
+      { title: "🎟️ Buy 2%", payload: "BUY_VOUCHER_2" },
+      { title: "🎟️ Buy 5%", payload: "BUY_VOUCHER_5" },
+      { title: "🎟️ Buy 10%", payload: "BUY_VOUCHER_10" }
+    );
+  } else {
+    msg += `\n\n⚠️ **Monthly voucher limit reached (10/10). Purchase options are temporarily hidden and will restore next month!**`;
+  }
 
   FREEBIE_REWARDS.forEach((reward, idx) => {
     const freebieItem = CATALOG_PRODUCTS[reward.freebieKey];
@@ -1252,7 +1268,7 @@ async function processVoucherPurchase(psid, itemKey, user) {
     const latestUser = await getUserRecord(psid);
     const monthlyCheck = await checkMonthlyVoucherLimit(psid);
     
-    if (!monthlyCheck.allowed && !latestUser.isTester) return sendQuickReplies(psid, `⚠️ Monthly Cap Reached.`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
+    if (!monthlyCheck.allowed && !latestUser.isTester) return sendQuickReplies(psid, `⚠️ Monthly Voucher Limit Reached (10/10).`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
     if (latestUser.points < item.cost) return sendQuickReplies(psid, `❌ Insufficient Points: Costs ${item.cost.toFixed(1)} pts.`, await getDashboardQuickReplies(psid, "NAV_SHOP"));
 
     await updateCachedUser(psid, { points: latestUser.points - item.cost });
@@ -1313,11 +1329,15 @@ async function processFreebieRedeem(psid, idx, user) {
     sendImageAttachment(psid, CART_IMAGE_LINKS[1]);
     sendImageAttachment(psid, CART_IMAGE_LINKS[2]);
 
-    let catalogMenu = `🎁 FREEBIE REDEEMED & SAVED TO VAULT!\n------------------\n• Reference Code: ${voucherCode}\n• Free Item: ${CATALOG_PRODUCTS[reward.freebieKey].name}\n• Required Companion: ${CATALOG_PRODUCTS[reward.requiredKey].name}\n\n💡 Note: No need to select the required product since it will be added automatically!\n\n🛒 CART BUILDER:\n`;
+    const numSymbols = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
+    let catalogMenu = `🎁 FREEBIE REDEEMED & SAVED TO VAULT!\n------------------\n• Reference Code: ${voucherCode}\n• Free Item: ${CATALOG_PRODUCTS[reward.freebieKey].name}\n• Required Companion: ${CATALOG_PRODUCTS[reward.requiredKey].name}\n\n💡 Note: Your required companion and freebie are automatically included in your cart!\n\n🛒 CART BUILDER:\n`;
+    
+    let index = 0;
     for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
-      catalogMenu += ` ${key}️⃣ ${p.name} — ${p.price.toFixed(2)} Php\n`;
+      catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ${p.price.toFixed(2)} Php\n`;
+      index++;
     }
-    catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write comma or space separated numbers (e.g. 5,5,1 to buy two of #5 and one of #1)!\n\n⬅️ Or type "Back" to return to the dashboard.`;
+    catalogMenu += `------------------\n👉 Type "0" to proceed with just the required item + freebie.\n👉 To buy multiple quantities, write numbers out (e.g. 5,5,1).\n\n⬅️ Or type "Back" to return to the dashboard.`;
 
     sendQuickReplies(psid, catalogMenu, [{ title: "⬅️ Back", payload: "NAV_BACK" }]);
   } finally {
@@ -1326,7 +1346,7 @@ async function processFreebieRedeem(psid, idx, user) {
 }
 
 // ==========================================
-// 16. CART CHECKOUT & POS ENGINE
+// 16. CART CHECKOUT & POS ENGINE (Numbered 1-8 for Catalog)
 // ==========================================
 async function promptVoucherWarning(psid, code) {
   const vouchers = await getUserVouchers(psid);
@@ -1337,7 +1357,7 @@ async function promptVoucherWarning(psid, code) {
   if (target.status === "USED") return sendTextMessage(psid, "⚠️ Voucher already redeemed.");
   if (target.expiryDate < todayStr) return sendTextMessage(psid, "⏰ Voucher has expired.");
 
-  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher reference code: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher cannot be undone! Once confirmed, this voucher will be permanently marked as USED and cannot be returned to your vault!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
+  sendQuickReplies(psid, `⚠️ IRREVERSIBLE VOUCHER WARNING\n------------------\nYou are about to apply voucher reference code: ${target.code} (${formatVoucherLabel(target)}).\n\n🚨 WARNING: Applying a voucher cannot be undone! Once confirmed, this voucher will be permanently marked as USED and automatically removed from your vault!\n\nAre you sure?`, [{ title: "⚠️ Confirm & Apply (Permanent)", payload: `CONFIRM_APPLY_${target.code}` }, { title: "📁 Vault", payload: "NAV_VAULT" }]);
 }
 
 async function initiateVoucherApplyFlow(psid, code, user) {
@@ -1350,14 +1370,20 @@ async function initiateVoucherApplyFlow(psid, code, user) {
   sendImageAttachment(psid, CART_IMAGE_LINKS[1]);
   sendImageAttachment(psid, CART_IMAGE_LINKS[2]);
 
+  const numSymbols = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
   let catalogMenu = `🛒 CART BUILDER\n------------------\n🔑 Applied Code: ${code} (${formatVoucherLabel(vDetails)})\n\nPRODUCT INDEX:\n`;
-  for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) catalogMenu += ` ${key}️⃣ ${p.name} — ${p.price.toFixed(2)} Php\n`;
+  
+  let index = 0;
+  for (const [key, p] of Object.entries(CATALOG_PRODUCTS)) {
+    catalogMenu += ` ${numSymbols[index] || (index + 1) + '️⃣'} ${p.name} — ${p.price.toFixed(2)} Php\n`;
+    index++;
+  }
   
   if (vDetails.type && vDetails.type.toString().startsWith("FREEBIE_")) {
     const parts = vDetails.type.toString().split("_");
-    catalogMenu += `------------------\n💡 Note: No need to select the required product since it will be added automatically!\n👉 Type "0" to claim your freebie + required item (${CATALOG_PRODUCTS[parts[2]].name}).\n👉 To buy multiple quantities, write them out (e.g. 5,5,1 to buy two #5 and one #1).`;
+    catalogMenu += `------------------\n💡 Note: Your required product (${CATALOG_PRODUCTS[parts[2]].name}) and freebie are included automatically!\n👉 Type "0" to claim, or add extra items by number.`;
   } else {
-    catalogMenu += `------------------\n👉 Enter product numbers (e.g. 1,1,3,8 to buy multiple quantities).`;
+    catalogMenu += `------------------\n👉 Enter product numbers (e.g. 1,1,3,8).`;
   }
   catalogMenu += `\n\n⬅️ Or type "Back" to return to the dashboard.`;
 
@@ -1409,7 +1435,9 @@ async function processCartCheckout(psid, text, user, session) {
     let amountSaved = isFreebie ? CATALOG_PRODUCTS[freebieKey].price : subtotal * (parseFloat(targetVoucher.discount || "0") / 100.0);
     const finalPrice = subtotal - amountSaved;
 
-    await firebasePatch(`vouchers/${psid}/${targetVoucher.code}`, { status: "USED" });
+    // 💡 Auto-delete the used voucher from Firebase storage immediately after use!
+    await firebaseDelete(`vouchers/${psid}/${targetVoucher.code}`);
+
     const txId = "REF-2026-" + Math.floor(100000 + Math.random() * 900000);
     await firebasePut(`transactions/${txId}`, { timestamp: new Date().toISOString(), psid: psid, customerName: `${user.title} ${user.lastName}`, voucherCode: targetVoucher.code, finalPaid: finalPrice, status: "COMPLETED" });
 
@@ -1423,7 +1451,7 @@ async function processCartCheckout(psid, text, user, session) {
     });
 
     clearSession(psid);
-    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, [
+    sendQuickReplies(psid, `✅ DIGITAL POS RECEIPT\n------------------\n🔖 REF NO: ${txId}\n👤 MEMBER: ${user.lastName}\n🔑 VOUCHER REF: ${targetVoucher.code}\n\n📦 BREAKDOWN:\n${itemizedListMsg}\n------------------\n💰 PAYABLE TOTAL: ${finalPrice.toFixed(2)} Php\n🎉 AMOUNT SAVED: ${amountSaved.toFixed(2)} Php\n------------------\n\n🗑️ Note: Used voucher has been automatically deleted from your vault to save space.\n\n📋 1️⃣ Forward this receipt to Customer Support.\n2️⃣ Provide custom engraving details.\n\n💬 Forward Here:\n${REAL_PERSON_CHAT_LINK}`, [
       { title: "📊 Dashboard", payload: "NAV_STATUS" },
       { title: "📁 Vault", payload: "NAV_VAULT" },
       { title: "🛍️ Shop & Freebies", payload: "NAV_SHOP" }
@@ -1447,7 +1475,7 @@ function formatVoucherLabel(v) {
 }
 
 // ==========================================
-// 17. PROMO CODES (Gifting fully removed)
+// 17. PROMO CODES
 // ==========================================
 async function processRedeemCode(psid, promoCode, user) {
   if (!tryUserLock(psid)) return;
@@ -1471,7 +1499,7 @@ async function processRedeemCode(psid, promoCode, user) {
 }
 
 // ==========================================
-// 18. VAULT DISPLAY
+// 18. VAULT DISPLAY (Numbered 1️⃣-8️⃣ & Auto-Cleaned)
 // ==========================================
 async function displayVoucherStorage(psid) {
   const vouchers = await getUserVouchers(psid);
@@ -1480,10 +1508,12 @@ async function displayVoucherStorage(psid) {
   const todayStr = new Date().toISOString().slice(0, 10);
   let msg = `📁 VOUCHER VAULT\n------------------\n`;
   const quickReplies = [];
+  const numSymbols = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
 
   vouchers.forEach((v, index) => {
     let statusIcon = (v.status === "USED") ? "❌ REDEEMED" : (v.expiryDate < todayStr) ? "⏰ EXPIRED" : "✅ ACTIVE";
-    msg += `[${index + 1}] Code: ${v.code} — ${formatVoucherLabel(v)} (${statusIcon})\n`;
+    const symbol = numSymbols[index] || (index + 1) + '️⃣';
+    msg += `${symbol} Code: ${v.code} — ${formatVoucherLabel(v)} (${statusIcon})\n`;
     
     if (v.status === "ACTIVE" && v.expiryDate >= todayStr && quickReplies.length < 10) {
       quickReplies.push({ title: `🎟️ Apply ${v.code}`, payload: `APPLY_PROMPT_${v.code}` });
