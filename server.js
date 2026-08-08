@@ -17,7 +17,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // ==========================================
-// 1. CONFIGURATION & SYSTEM CONSTANTS (Balanced Grinds & Super Freebies)
+// 1. CONFIGURATION & SYSTEM CONSTANTS
 // ==========================================
 const VIP_POINT_THRESHOLD = 20.0;          
 const MONTHLY_VOUCHER_LIMIT = 10;          
@@ -30,7 +30,10 @@ const MAX_DAILY_OTP_PER_USER = 1;
 const MINING_UNLOCK_NORMAL_INVITES = 10;   
 const MINING_UNLOCK_MISSIONARY_INVITES = 3; 
 const MINING_COOLDOWN_HOURS = 24;         
-const MAX_REFERRALS_PER_USER = 10;        
+
+// 🔄 Removed global MAX_REFERRALS_PER_USER cap; replaced with rule: Normal emails capped at 20 invites, @missionary.org unlimited!
+const MAX_NORMAL_REFERRALS = 20;        
+
 const TIER_2_INVITE_THRESHOLD = 10;       
 const MISSIONARY_INVITE_REQUIREMENT = 3;  
 const MAX_ACTIVE_VAULT_VOUCHERS = 10;     
@@ -76,20 +79,18 @@ const CATALOG_PRODUCTS = {
   "8": { name: "Mission Memento", price: 599.00 }
 };
 
-// Vouchers balanced for 3-month grind
 const SHOP_PRODUCTS = {
   "1": { name: "2% Premium Voucher", cost: 15.0, discount: 2, type: "WHOLESALE" },
   "2": { name: "5% Premium Voucher", cost: 30.0, discount: 5, type: "WHOLESALE" },
   "3": { name: "10% Premium Voucher", cost: 45.0, discount: 10, type: "WHOLESALE" }
 };
 
-// Freebies balanced for 10-month grind + Super Freebie (Scripture Case @ 1000 Pts)
 const FREEBIE_REWARDS = [
   { pointCost: 45.0, freebieKey: "4", requiredKey: "1" }, 
   { pointCost: 75.0, freebieKey: "1", requiredKey: "2" }, 
   { pointCost: 110.0, freebieKey: "3", requiredKey: "5" }, 
   { pointCost: 150.0, freebieKey: "2", requiredKey: "7" },
-  { pointCost: 1000.0, freebieKey: "7", requiredKey: "6", isSuper: true } // 🌟 Super Freebie Scripture Case
+  { pointCost: 1000.0, freebieKey: "7", requiredKey: "6", isSuper: true } 
 ];
 
 // ==========================================
@@ -539,12 +540,14 @@ Thank you for being a valued part of our community! ❤️
       }
       return displayDashboard(psid, userCheck);
     }
-    return sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, tap below or reply with: NO_REF_CODE)`, [
-      { title: "🚀 Get Started", payload: "GET_STARTED" },
-      { title: "❓ No Code", payload: "NO_REF_CODE" },
-      { title: "ℹ️ About", payload: "MENU_ABOUT" },
-      { title: "⚖️ T&C", payload: "MENU_TC" },
-      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
+
+    const activeRef = getDirectRef(psid) || MASTER_REFERRAL_CODE;
+    setDirectRef(psid, activeRef);
+    setSession(psid, { state: "AWAITING_CONSENT" });
+
+    return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
+      { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+      { title: "❌ Decline", payload: "CANCEL" }
     ]);
   }
 
@@ -631,75 +634,38 @@ Thank you for being a valued part of our community! ❤️
 
     if (trimmedUpper.startsWith("CONFIRM_APPLY_")) return initiateVoucherApplyFlow(psid, trimmedUpper.replace("CONFIRM_APPLY_", "").trim(), user);
     if (trimmedUpper.startsWith("APPLY_PROMPT_")) return promptVoucherWarning(psid, trimmedUpper.replace("APPLY_PROMPT_", "").trim());
-    if (trimmedUpper.startsWith("/REDEEM" ) || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
+    if (trimmedUpper.startsWith("/REDEEM") || trimmedUpper.startsWith("REDEEM ")) return processRedeemCode(psid, text.replace(/\/redeem/i, "").replace(/redeem/i, "").trim().toUpperCase(), user);
     if (trimmedUpper.startsWith("/APPLY")) return promptVoucherWarning(psid, text.replace(/\/apply/i, "").trim().toUpperCase());
 
     return displayDashboard(psid, user);
   }
 
-  let currentRef = getDirectRef(psid);
+  let currentRef = getDirectRef(psid) || MASTER_REFERRAL_CODE;
 
   if (!session) {
-    if (trimmedUpper === "NO_REF_CODE") {
-      setSession(psid, { state: "AWAITING_CONSENT" });
-      return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
-        { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
-        { title: "❌ Decline", payload: "CANCEL" }
-      ]);
-    }
-
-    const inputCode = (trimmedUpper !== "GET_STARTED" && trimmedUpper !== "") ? trimmedUpper : currentRef;
-    if (inputCode) {
-      const matchingUser = await getUserRecordByRefCode(inputCode);
-      if (inputCode !== MASTER_REFERRAL_CODE && matchingUser) {
-        const stats = getInviteStats(matchingUser);
-        if (stats.total >= MAX_REFERRALS_PER_USER) return sendTextMessage(psid, `⚠️ Invitation Limit Reached: The key "${inputCode}" has reached its limit of ${MAX_REFERRALS_PER_USER} invited members.`);
-      }
-
-      if (matchingUser || inputCode === MASTER_REFERRAL_CODE) {
-        setDirectRef(psid, inputCode);
-        setSession(psid, { state: "AWAITING_CONSENT" });
-        return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
-          { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
-          { title: "❌ Decline", payload: "CANCEL" }
-        ]);
-      }
-    }
-
-    return sendQuickReplies(psid, `🌟 WELCOME TO TIMELESS CREATIONS!\n------------------\nTo register for MissionPerks, please reply with your friend's 6-character Invitation Key.\n\nFormat: AAA### (e.g. KJL482)\n\n(If you don't have a code, tap below or reply with: NO_REF_CODE)`, [
-      { title: "🚀 Get Started", payload: "GET_STARTED" },
-      { title: "❓ No Code", payload: "NO_REF_CODE" },
-      { title: "ℹ️ About", payload: "MENU_ABOUT" },
-      { title: "⚖️ T&C", payload: "MENU_TC" },
-      { title: "💌 Invite Hub", payload: "NAV_INVITE_REDEEM" }
+    setDirectRef(psid, currentRef);
+    setSession(psid, { state: "AWAITING_CONSENT" });
+    return sendQuickReplies(psid, `⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nDo you accept these terms to continue?`, [
+      { title: "✅ I Agree", payload: "CONSENT_ACCEPTED" },
+      { title: "❌ Decline", payload: "CANCEL" }
     ]);
   }
 
   if (trimmedUpper === "CANCEL" || trimmedUpper === "RESTART") {
     clearSession(psid);
-    return sendTextMessage(psid, "🔄 Registration cancelled. Send 'Get Started' or your friend's Invite Key to try again.");
+    return sendTextMessage(psid, "🔄 Registration cancelled. Send 'Get Started' to try again.");
   }
 
   if (session.state === "AWAITING_CONSENT") {
     if (trimmedUpper === "CONSENT_ACCEPTED" || trimmedUpper === "I AGREE" || trimmedUpper === "AGREE") {
-      const ref = getDirectRef(psid);
-      if (ref === MASTER_REFERRAL_CODE) {
-        setSession(psid, { state: "AWAITING_EMAIL_FOR_MASTER" });
-        return sendTextMessage(psid, `📧 NO FRIEND'S INVITATION KEY?\n------------------\nPlease enter your Email address. We will email you the Master Key along with your Verification PIN.`);
-      } else {
-        setSession(psid, { state: "AWAITING_EMAIL" });
-        return sendTextMessage(psid, `🎉 TERMS ACCEPTED!\n------------------\n👉 STEP 1 of 4: Enter your Email address to verify your account:`);
-      }
+      setSession(psid, { state: "AWAITING_EMAIL" });
+      return sendTextMessage(psid, `🎉 TERMS ACCEPTED!\n------------------\n👉 STEP 1 of 4: Enter your Email address to verify your account:`);
     } else {
       clearSession(psid);
       return sendTextMessage(psid, "❌ Registration declined. You must accept the Data Privacy terms to register.");
     }
   }
 
-  if (session.state === "AWAITING_EMAIL_FOR_MASTER") {
-    setDirectRef(psid, MASTER_REFERRAL_CODE);
-    return handleEmailAndSendOTP(psid, text.trim().toLowerCase(), session, true);
-  }
   if (session.state === "AWAITING_EMAIL") return handleEmailAndSendOTP(psid, text.trim().toLowerCase(), session, false);
   if (session.state === "AWAITING_OTP") return processOTPVerification(psid, text.trim(), session);
   if (session.state === "AWAITING_TITLE") {
@@ -966,7 +932,7 @@ async function revokeAndResetAccount(psid) {
   cache.del("USER_" + psid);
   cache.del("DIRECT_REF_" + psid);
 
-  sendQuickReplies(psid, `🔄 ACCOUNT FULLY REVOKED & RESET\n------------------\nYour tester status, balance, vouchers, and profile have been completely wiped.\n\nType "Get Started" or send your friend's Invite Key to start fresh!`, [
+  sendQuickReplies(psid, `🔄 ACCOUNT FULLY REVOKED & RESET\n------------------\nYour tester status, balance, vouchers, and profile have been completely wiped.\n\nType "Get Started" to start fresh!`, [
     { title: "Get Started", payload: "GET_STARTED" }
   ]);
 }
@@ -980,7 +946,7 @@ async function displayDashboard(psid, user) {
   const vipBadge = isTier2 ? "👑 TIER 2 VIP" : "⭐ TIER 1 MEMBER";
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
 
-  let msg = `📊 MEMBER DASHBOARD\n------------------\n👤 Member: ${user.title} ${user.lastName}\n🎖️ Tier: ${vipBadge}\n🔑 Ref Code: ${user.refCode}\n👥 Invites: ${stats.total} (${stats.normalCount} Normal, ${stats.missionaryCount} Missionary) / ${MAX_REFERRALS_PER_USER}\n⭐ Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n------------------\n📸 Product Catalog:\n${GOOGLE_PHOTOS_LINK}\n\n💬 Customer Support:\n${REAL_PERSON_CHAT_LINK}\n------------------\n`;
+  let msg = `📊 MEMBER DASHBOARD\n------------------\n👤 Member: ${user.title} ${user.lastName}\n🎖️ Tier: ${vipBadge}\n🔑 Ref Code: ${user.refCode}\n👥 Invites: ${stats.total} (${stats.normalCount}/${MAX_NORMAL_REFERRALS} Normal, ${stats.missionaryCount} Missionary - Unlimited)\n⭐ Balance: ${user.points.toFixed(1)} Pts\n📅 Monthly Limit: ${monthlyCheck.used} / ${monthlyCheck.limit}\n------------------\n📸 Product Catalog:\n${GOOGLE_PHOTOS_LINK}\n\n💬 Customer Support:\n${REAL_PERSON_CHAT_LINK}\n------------------\n`;
   
   sendQuickReplies(psid, msg, await getDashboardQuickReplies(psid, "NAV_STATUS"));
 }
@@ -988,11 +954,10 @@ async function displayDashboard(psid, user) {
 function displayInviteAndRedeemHub(psid, user) {
   const stats = getInviteStats(user);
   
-  // 💡 Separate dedicated invite marketing message prompt
   let separateInviteMsg = `📢 JOIN MY GROUP & EARN REWARDS!\n------------------\nJoin my group and earn points for vouchers and freebies! Share your invitation link below with friends and fellow members:\n\n👉 ${REFERRAL_BASE_URL}?ref=${user.refCode}`;
   sendTextMessage(psid, separateInviteMsg);
 
-  let instructionsMsg = `💌 INVITE HUB & REDEEM\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} Invites (${stats.normalCount}/10 Normal or ${stats.missionaryCount}/3 Missionary)\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!`;
+  let instructionsMsg = `💌 INVITE HUB & REDEEM\n------------------\n🔑 Your Key: ${user.refCode}\n👥 Progress: ${stats.total} Invites (${stats.normalCount}/${MAX_NORMAL_REFERRALS} Normal capped, ${stats.missionaryCount} Missionary - Unlimited)\n\n🎁 REWARDS:\n• Friend Sign-Up: +2.0 Pts + 5% Voucher!\n• Missionary Sign-Up: +10.0 Pts + Unlock Daily Redeem!\n• Tier 2 Unlock: Reach 10 Invites for 1.0 Pt/day yield & Level 1-3 Commissions!`;
   
   sendQuickReplies(psid, instructionsMsg, [
     { title: "🎁 Claim Daily Redeem", payload: "NAV_DAILY_REDEEM" },
@@ -1003,7 +968,7 @@ function displayInviteAndRedeemHub(psid, user) {
 }
 
 // ==========================================
-// 11. DAILY REDEEM ENGINE (Requires 3 Missionaries OR 10 Normals)
+// 11. DAILY REDEEM ENGINE
 // ==========================================
 async function processDailyRedeem(psid, user) {
   const now = new Date();
@@ -1044,7 +1009,7 @@ async function processDailyRedeem(psid, user) {
 }
 
 // ==========================================
-// 12. REWARD ROOM FEATURE (50 Capacity, 1 Ticket Max, 80% Win / 20% Burn)
+// 12. REWARD ROOM FEATURE
 // ==========================================
 async function displayRewardRoom(psid, user) {
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -1162,7 +1127,7 @@ async function executeRewardRoomDraw(todayStr, room) {
 }
 
 // ==========================================
-// 13. PAID UNSUBSCRIBE FEATURE WITH WARNING & RESTRAINT
+// 13. PAID UNSUBSCRIBE FEATURE
 // ==========================================
 async function promptPaidUnsubscribe(psid, user) {
   if (user.unsubscribed) return sendQuickReplies(psid, "⚠️ You are already unsubscribed.", [{ title: "Get Started", payload: "GET_STARTED" }]);
@@ -1206,13 +1171,21 @@ async function processPaidUnsubscribe(psid, user) {
 }
 
 // ==========================================
-// 14. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE
+// 14. LEVEL 1 TO LEVEL 3 COMMISSION ENGINE (With Normal 20 Invite Cap Check)
 // ==========================================
 async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, initialBonus, newUserName) {
   const referrer = await getUserRecordByRefCode(userRefCode);
   if (!referrer || referrer.psid === newPsid || referrer.unsubscribed) return;
 
   const isMissionary = newUserEmail && newUserEmail.toLowerCase().endsWith("@missionary.org");
+  const stats = getInviteStats(referrer);
+
+  // 💡 Enforce Normal invite cap of 20. If normal invites >= 20, normal invites no longer reward or register!
+  if (!isMissionary && stats.normalCount >= MAX_NORMAL_REFERRALS) {
+    sendTextMessage(referrer.psid, `⚠️ Referral Limit Reached: You have reached the maximum cap of ${MAX_NORMAL_REFERRALS} normal invites. Invite `@missionary.org` emails for unlimited rewards!`);
+    return;
+  }
+
   const directReward = isMissionary ? 10.0 : 2.0;
 
   await firebasePut(`users/${referrer.psid}/invites/${newPsid}`, newUserEmail);
@@ -1223,7 +1196,7 @@ async function distributeUplineCommissions(userRefCode, newPsid, newUserEmail, i
 
   const notif = isMissionary 
     ? `⚡ NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Type: Missionary (@missionary.org)\n• Reward: +10.0 Pts` 
-    : `🎉 NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Reward: +2.0 Pts\n• Total Invites: ${getInviteStats(referrer).total} / ${MAX_REFERRALS_PER_USER}`;
+    : `🎉 NEW REFERRAL JOINED! 🎉\n• Member: ${newUserName}\n• Reward: +2.0 Pts\n• Normal Invites: ${stats.normalCount + 1} / ${MAX_NORMAL_REFERRALS}`;
   sendTextMessage(referrer.psid, notif);
 
   await processLevelCommissions(referrer.psid, directReward);
@@ -1261,7 +1234,7 @@ async function processLevelCommissions(originPsid, baseAmount) {
 }
 
 // ==========================================
-// 15. UNIFIED SHOP & FREEBIES HUB (Disappears after 1 claim, restock available)
+// 15. UNIFIED SHOP & FREEBIES HUB
 // ==========================================
 async function displayShopAndFreebies(psid, user) {
   const monthlyCheck = await checkMonthlyVoucherLimit(psid);
