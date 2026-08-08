@@ -1230,7 +1230,6 @@ async function displayShopAndFreebies(psid, user) {
 
   const quickReplies = [];
 
-  // 💡 If monthly cap is reached, hide purchase quick replies until next month!
   if (!isCapped) {
     quickReplies.push(
       { title: "🎟️ Buy 2%", payload: "BUY_VOUCHER_2" },
@@ -1435,7 +1434,6 @@ async function processCartCheckout(psid, text, user, session) {
     let amountSaved = isFreebie ? CATALOG_PRODUCTS[freebieKey].price : subtotal * (parseFloat(targetVoucher.discount || "0") / 100.0);
     const finalPrice = subtotal - amountSaved;
 
-    // 💡 Auto-delete the used voucher from Firebase storage immediately after use!
     await firebaseDelete(`vouchers/${psid}/${targetVoucher.code}`);
 
     const txId = "REF-2026-" + Math.floor(100000 + Math.random() * 900000);
