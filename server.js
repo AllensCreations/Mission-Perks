@@ -473,24 +473,36 @@ async function handleIncomingMessage(psid, text) {
 
   // Persistent Menu Option Handlers
   if (trimmedUpper === "MENU_ABOUT") {
-    return sendTextMessage(psid, `ℹ️ ABOUT MISSIONPERKS & CREATORS
-------------------
-📌 **About the App:**
-MissionPerks is an extension of our shop 'Timeless Creations', created so you can easily access exclusive vouchers, rewards, and freebies!
+    return sendTextMessage(psid, `✨ Welcome to MissionPerks ✨
+Powered by Timeless Creations
 
-📌 **Why We Created It:**
-Our shop built this platform to widen our reach, connect with our community, and give back awesome perks to our loyal customers.
+🎁 WHAT IS MISSIONPERKS?
+MissionPerks is the official rewards extension of Timeless Creations. We built this platform as a special way to say thank you—giving our community direct access to exclusive vouchers, freebies, and special discounts!
 
-👨‍💻 **About the Creator:**
-Hi! I'm an Electrical Engineering student who created this Messenger bot! This project started as one of my 3 AM thoughts, and I'm thrilled to see it fully functional and helping users today.
+🚀 OUR MISSION
+We want to bring more value straight to your inbox! MissionPerks was designed to make claiming rewards effortless while helping our shop stay seamlessly connected with you.
 
-If you'd like to automate a Messenger bot or need custom chat solutions for your own business, feel free to reach out for freelance projects!
+🤖 BEHIND THE AUTOMATION
+This interactive experience was custom-engineered from scratch to manage customer rewards, handle inquiries, and deliver instant perks 24/7.
 
-📧 salviejomark2019@gmail.com
-or
-💬 https://m.me/MrMisterYosoo
+---
 
-Thank you!
+💼 WANT AN AUTOMATED BOT FOR YOUR BUSINESS?
+Turn passive visitors into loyal customers! I build custom Messenger bots that automate customer support, handle orders, launch reward programs, and scale sales automatically. 
+
+📬 Work With Me (Freelance Services):
+• Email: salviejomark2019@gmail.com
+• Direct Message: https://m.me/MrMisterYosoo
+
+---
+
+🛍️ CONNECT WITH TIMELESS CREATIONS
+Have questions about our shop, products, or your active perks?
+• Email: Timelesscreations.ph@gmail.com
+• Direct Message: https://m.me/timeless.creations.06
+
+Thank you for being a valued part of our community! ❤️
+
 `);
   }
   if (trimmedUpper === "MENU_TC") {
