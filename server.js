@@ -473,8 +473,25 @@ async function handleIncomingMessage(psid, text) {
 
   // Persistent Menu Option Handlers
   if (trimmedUpper === "MENU_ABOUT") {
-    return sendTextMessage(psid, "ℹ️ ABOUT MISSIONPERKS & CREATORS\n------------------\n📌 **About the App:**\nMissionPerks is an extension of our shop 'Timeless Creations', created so you can easily access exclusive vouchers, rewards, and freebies!\n\n📌 **Why We Created It:**\nOur shop built this platform to widen our reach, connect with our community, and give back awesome perks to our loyal customers.\n\n👨‍💻 **About the Creator:**\nHi! I'm an Electrical Engineering student who created this Messenger bot! This project started as one of my 3 AM thoughts, and I'm thrilled to see it fully functional and helping users today.\n\nIf you want to automate your Messenger bot or need custom chat solutions for your business, please contact me for freelance projects at:\n📧 salviejomark2019@gmail.com\nor\n💬 https://m.me/MrMisterYosoo\n\nThank you!
-");
+    return sendTextMessage(psid, `ℹ️ ABOUT MISSIONPERKS & CREATORS
+------------------
+📌 **About the App:**
+MissionPerks is an extension of our shop 'Timeless Creations', created so you can easily access exclusive vouchers, rewards, and freebies!
+
+📌 **Why We Created It:**
+Our shop built this platform to widen our reach, connect with our community, and give back awesome perks to our loyal customers.
+
+👨‍💻 **About the Creator:**
+Hi! I'm an Electrical Engineering student who created this Messenger bot! This project started as one of my 3 AM thoughts, and I'm thrilled to see it fully functional and helping users today.
+
+If you'd like to automate a Messenger bot or need custom chat solutions for your own business, feel free to reach out for freelance projects!
+
+📧 salviejomark2019@gmail.com
+or
+💬 https://m.me/MrMisterYosoo
+
+Thank you!
+`);
   }
   if (trimmedUpper === "MENU_TC") {
     return sendTextMessage(psid, "⚖️ TERMS & CONDITIONS (T&C) & PRIVACY POLICY\n------------------\nWelcome to MissionPerks, an official extension and digital rewards ecosystem of Timeless Creations. By using this Messenger bot, you explicitly agree to our terms. \n\n• **Communications & Privacy:** We use your registered email address to endorse products and send monthly updates. You maintain full autonomy and can unsubscribe anytime via direct email links or the in-bot unsubscription feature.\n• **Data Security:** We do not sell, trade, or lease your personal data to external brokers. All information is securely encrypted and stored.\n\nThank you for trusting Timeless Creations!");
